@@ -5,13 +5,30 @@ import cors from 'cors';
 import { registerSocketHandlers } from './socket.js';
 
 const app = express();
-app.use(cors({ origin: true, credentials: true }));
+
+const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
+const allowedOrigins = [FRONTEND_URL, 'http://localhost:5173'];
+const isAllowedOrigin = (origin?: string) => !origin || allowedOrigins.includes(origin);
+
+app.use(
+  cors({
+    origin(origin, callback) {
+      callback(isAllowedOrigin(origin) ? null : new Error('Not allowed by CORS'), true);
+    },
+    credentials: true,
+  }),
+);
 app.use(express.json());
 
 const httpServer = createServer(app);
 
 const io = new Server(httpServer, {
-  cors: { origin: true },
+  cors: {
+    origin(origin, callback) {
+      callback(isAllowedOrigin(origin) ? null : new Error('Not allowed by CORS'), true);
+    },
+    credentials: true,
+  },
   pingTimeout: 60000,
   pingInterval: 25000,
 });
