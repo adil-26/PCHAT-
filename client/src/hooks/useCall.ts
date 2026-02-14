@@ -6,20 +6,13 @@ const defaultIceServers: RTCIceServer[] = [
   { urls: 'stun:stun1.l.google.com:19302' },
 ];
 
-const resolveIceServers = (): RTCIceServer[] => {
-  const raw = import.meta.env.VITE_ICE_SERVERS;
-  if (!raw) return defaultIceServers;
-  try {
-    const parsed = JSON.parse(raw) as RTCIceServer[];
-    if (!Array.isArray(parsed) || parsed.length === 0) return defaultIceServers;
-    return parsed;
-  } catch {
-    console.warn('Invalid VITE_ICE_SERVERS JSON; falling back to default STUN servers.');
-    return defaultIceServers;
-  }
+const getTurnCredentialsUrl = () => {
+  const explicit = import.meta.env.VITE_TURN_CREDENTIALS_URL ?? '';
+  if (explicit) return explicit;
+  const wsBase = (import.meta.env.VITE_WS_URL ?? '').replace(/\/+$/, '');
+  if (wsBase) return `${wsBase}/api/turn-credentials`;
+  return '/api/turn-credentials';
 };
-
-const iceServers = resolveIceServers();
 
 export function useCall() {
   const ctx = useContext(CallContext);
@@ -50,6 +43,38 @@ function useProvideCall(): CallContextValue {
   const pendingSignalsRef = useRef<Array<{ fromUserId: string; signal: { type: string; data: unknown } }>>([]);
   const pendingOfferRef = useRef<RTCSessionDescriptionInit | null>(null);
   const isHandlingOfferRef = useRef(false);
+  const iceServersRef = useRef<RTCIceServer[] | null>(null);
+
+  const getIceServers = useCallback(async (): Promise<RTCIceServer[]> => {
+    if (iceServersRef.current) return iceServersRef.current;
+    const raw = import.meta.env.VITE_ICE_SERVERS;
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw) as RTCIceServer[];
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          iceServersRef.current = parsed;
+          return parsed;
+        }
+      } catch {
+        console.warn('Invalid VITE_ICE_SERVERS JSON; falling back to TURN credentials endpoint.');
+      }
+    }
+
+    try {
+      const response = await fetch(getTurnCredentialsUrl());
+      if (!response.ok) throw new Error(`TURN endpoint failed with ${response.status}`);
+      const payload = await response.json() as { iceServers?: RTCIceServer[] };
+      if (Array.isArray(payload.iceServers) && payload.iceServers.length > 0) {
+        iceServersRef.current = payload.iceServers;
+        return payload.iceServers;
+      }
+    } catch (error) {
+      console.warn('Using default STUN servers because TURN credentials are unavailable.', error);
+    }
+
+    iceServersRef.current = defaultIceServers;
+    return defaultIceServers;
+  }, []);
 
   const setSignalHandler = useCallback((handler: ((payload: { fromUserId: string; signal: { type: string; data: unknown } }) => void) | null) => {
     signalHandlerRef.current = handler;
@@ -105,7 +130,8 @@ function useProvideCall(): CallContextValue {
   }, [socket, setIncomingCall, cleanup]);
 
   const createPeerConnection = useCallback(
-    (toUserId: string) => {
+    async (toUserId: string) => {
+      const iceServers = await getIceServers();
       const pc = new RTCPeerConnection({ iceServers });
       pcRef.current = pc;
       pc.ontrack = (e) => {
@@ -120,7 +146,7 @@ function useProvideCall(): CallContextValue {
       };
       return pc;
     },
-    [socket]
+    [socket, getIceServers]
   );
 
   const getLocalStream = useCallback(async (type: 'audio' | 'video') => {
@@ -146,7 +172,7 @@ function useProvideCall(): CallContextValue {
         const stream = await getLocalStream(type);
         const negotiatedType: 'audio' | 'video' = stream.getVideoTracks().length > 0 ? 'video' : 'audio';
         localStreamRef.current = stream;
-        const pc = createPeerConnection(toUserId);
+        const pc = await createPeerConnection(toUserId);
         stream.getTracks().forEach((t) => pc.addTrack(t, stream));
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
@@ -188,7 +214,7 @@ function useProvideCall(): CallContextValue {
         const stream = await getLocalStream(type);
         const negotiatedType: 'audio' | 'video' = stream.getVideoTracks().length > 0 ? 'video' : 'audio';
         localStreamRef.current = stream;
-        const pc = createPeerConnection(fromUserId);
+        const pc = await createPeerConnection(fromUserId);
         stream.getTracks().forEach((t) => pc.addTrack(t, stream));
 
         setSignalHandler(async (payload: { fromUserId: string; signal: { type: string; data: unknown } }) => {
