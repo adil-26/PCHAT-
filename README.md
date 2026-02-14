@@ -87,6 +87,13 @@ App runs at **http://localhost:5173**. Vite proxies `/api` and `/socket.io` to t
 
 - **Server:** create `server/.env` and set `PORT=3001` if you want a different port.
 - **Client:** create `client/.env` and set `VITE_WS_URL=http://localhost:3001` if the backend is not on the same host (e.g. for deployment).
+- **Client (recommended for deployed calling):** set `VITE_ICE_SERVERS` as JSON to include TURN in production.
+
+Example:
+
+```env
+VITE_ICE_SERVERS=[{"urls":"stun:stun.l.google.com:19302"},{"urls":"turn:global.relay.metered.ca:80","username":"YOUR_USER","credential":"YOUR_PASS"},{"urls":"turn:global.relay.metered.ca:443?transport=tcp","username":"YOUR_USER","credential":"YOUR_PASS"}]
+```
 
 ## API Overview
 

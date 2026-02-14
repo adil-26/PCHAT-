@@ -1,10 +1,25 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useApp } from '../context/AppContext';
 
-const iceServers: RTCIceServer[] = [
+const defaultIceServers: RTCIceServer[] = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
 ];
+
+const resolveIceServers = (): RTCIceServer[] => {
+  const raw = import.meta.env.VITE_ICE_SERVERS;
+  if (!raw) return defaultIceServers;
+  try {
+    const parsed = JSON.parse(raw) as RTCIceServer[];
+    if (!Array.isArray(parsed) || parsed.length === 0) return defaultIceServers;
+    return parsed;
+  } catch {
+    console.warn('Invalid VITE_ICE_SERVERS JSON; falling back to default STUN servers.');
+    return defaultIceServers;
+  }
+};
+
+const iceServers = resolveIceServers();
 
 export function useCall() {
   const ctx = useContext(CallContext);
