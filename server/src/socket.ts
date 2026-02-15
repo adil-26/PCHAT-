@@ -496,6 +496,30 @@ export function registerSocketHandlers(io: Server) {
       io.to(payload.roomId).emit('message:new', msg);
     });
 
+    socket.on('room:typing', (payload: { roomId: string; isTyping: boolean }) => {
+      const userId = socket.data.userId;
+      const username = socket.data.username ?? 'Unknown';
+      if (!userId) return;
+      socket.to(payload.roomId).emit('room:typing', {
+        roomId: payload.roomId,
+        userId,
+        username,
+        isTyping: !!payload.isTyping,
+        at: Date.now(),
+      });
+    });
+
+    socket.on('room:seen', (payload: { roomId: string; messageId: string }) => {
+      const userId = socket.data.userId;
+      if (!userId || !payload.messageId) return;
+      socket.to(payload.roomId).emit('room:seen', {
+        roomId: payload.roomId,
+        userId,
+        messageId: payload.messageId,
+        at: Date.now(),
+      });
+    });
+
     socket.on('call:signal', (payload: { toUserId: string; signal: { type: string; data: unknown } }) => {
       const peer = Array.from(users.values()).find((u) => u.id === payload.toUserId);
       if (peer) io.to(peer.socketId).emit('call:signal', { fromUserId: socket.data.userId, signal: payload.signal });

@@ -27,6 +27,8 @@ interface AppState {
   nearbyHunters: NearbyHunter[];
   huntSharing: boolean;
   runningZoneId: string | null;
+  typingByRoom: Record<string, { userId: string; username: string; isTyping: boolean; at: number } | undefined>;
+  seenByRoom: Record<string, { userId: string; messageId: string; at: number } | undefined>;
 }
 
 const defaultState: AppState = {
@@ -53,6 +55,8 @@ const defaultState: AppState = {
   nearbyHunters: [],
   huntSharing: false,
   runningZoneId: null,
+  typingByRoom: {},
+  seenByRoom: {},
 };
 
 type AppContextValue = Omit<AppState, 'messagesByRoom'> & {
@@ -74,6 +78,8 @@ type AppContextValue = Omit<AppState, 'messagesByRoom'> & {
   updateHuntPresence: (lat: number, lng: number, shareNearby: boolean) => void;
   startAuraRun: (zoneId: string, lat: number, lng: number) => void;
   stopAuraRun: (lat: number, lng: number) => void;
+  setTyping: (roomId: string, isTyping: boolean) => void;
+  markRoomSeen: (roomId: string, messageId: string) => void;
   removeFreedomPost: (postId: string) => void;
   setIncomingCall: (call: AppState['incomingCall']) => void;
   setActiveCall: (call: AppState['activeCall']) => void;
@@ -273,6 +279,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     socket.on('room:user_joined', ({ roomId }: { roomId: string }) => {
       setState((s) => (s.activeRoom?.id === roomId ? s : s));
     });
+    socket.on('room:typing', (payload: { roomId: string; userId: string; username: string; isTyping: boolean; at: number }) => {
+      setState((s) => ({
+        ...s,
+        typingByRoom: {
+          ...s.typingByRoom,
+          [payload.roomId]: payload.isTyping ? payload : undefined,
+        },
+      }));
+    });
+    socket.on('room:seen', (payload: { roomId: string; userId: string; messageId: string; at: number }) => {
+      setState((s) => ({
+        ...s,
+        seenByRoom: {
+          ...s.seenByRoom,
+          [payload.roomId]: payload,
+        },
+      }));
+    });
     socket.on('wall:new', (post: FreedomPost) => {
       const normalized = { ...post, vibeCounts: post.vibeCounts ?? { real: 0, wild: 0, deep: 0, w: 0 } };
       setState((s) => ({ ...s, freedomPosts: [normalized, ...s.freedomPosts].slice(0, 250) }));
@@ -360,6 +384,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       socket.off('room:invite');
       socket.off('room:joined');
       socket.off('room:user_joined');
+      socket.off('room:typing');
+      socket.off('room:seen');
       socket.off('wall:new');
       socket.off('wall:snapshot');
       socket.off('wall:update');
@@ -590,6 +616,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [socket],
   );
 
+  const setTyping = useCallback(
+    (roomId: string, isTyping: boolean) => {
+      socket.emit('room:typing', { roomId, isTyping });
+    },
+    [socket],
+  );
+
+  const markRoomSeen = useCallback(
+    (roomId: string, messageId: string) => {
+      socket.emit('room:seen', { roomId, messageId });
+    },
+    [socket],
+  );
+
   const setIncomingCall = useCallback((incomingCall: AppState['incomingCall']) => {
     setState((s) => ({ ...s, incomingCall }));
   }, []);
@@ -620,11 +660,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       updateHuntPresence,
       startAuraRun,
       stopAuraRun,
+      setTyping,
+      markRoomSeen,
       removeFreedomPost,
       setIncomingCall,
       setActiveCall,
     }),
-    [state, messages, socket, login, logout, selectRoom, sendMessage, startChat, postFreedom, viewFreedomPost, reactToFreedomPost, claimDailyNodeCharge, postConfession, removeConfession, claimAuraZone, requestBorrowAura, respondBorrowAura, updateHuntPresence, startAuraRun, stopAuraRun, removeFreedomPost, setIncomingCall, setActiveCall]
+    [state, messages, socket, login, logout, selectRoom, sendMessage, startChat, postFreedom, viewFreedomPost, reactToFreedomPost, claimDailyNodeCharge, postConfession, removeConfession, claimAuraZone, requestBorrowAura, respondBorrowAura, updateHuntPresence, startAuraRun, stopAuraRun, setTyping, markRoomSeen, removeFreedomPost, setIncomingCall, setActiveCall]
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
