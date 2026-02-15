@@ -260,6 +260,37 @@ body {
   white-space: nowrap;
 }
 
+.node-skin {
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  padding: 0.1rem 0.34rem;
+  font-size: 0.58rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.skin-rookie {
+  color: #d0d0d0;
+}
+
+.skin-neon {
+  color: #9fffe3;
+  border-color: rgba(80, 236, 198, 0.5);
+  background: rgba(80, 236, 198, 0.1);
+}
+
+.skin-flux {
+  color: #b9d3ff;
+  border-color: rgba(120, 160, 255, 0.5);
+  background: rgba(120, 160, 255, 0.1);
+}
+
+.skin-nova {
+  color: #ffd6c6;
+  border-color: rgba(255, 77, 46, 0.6);
+  background: rgba(255, 77, 46, 0.16);
+}
+
 .charge-btn {
   margin-left: auto;
   border: 1px solid var(--line);

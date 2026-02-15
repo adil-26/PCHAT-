@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useApp } from '../context/AppContext';
 
@@ -20,8 +20,21 @@ export function FreedomWall() {
   const [isAnonymous, setIsAnonymous] = useState(false);
   const [parentPostId, setParentPostId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [now, setNow] = useState(Date.now());
   const imageInputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const formatLeft = (expiresAt: number) => {
+    const left = Math.max(0, expiresAt - now);
+    const m = Math.floor(left / 60000);
+    const s = Math.floor((left % 60000) / 1000);
+    return `${m}:${s.toString().padStart(2, '0')}`;
+  };
 
   const onPickImage = (file?: File) => {
     setError(null);
@@ -171,8 +184,9 @@ export function FreedomWall() {
                   </span>
                   <span className="owner-badge">Depth {post.chainDepth ?? 0}</span>
                   <span className="owner-badge">Contrib {post.contributors?.length ?? 1}</span>
-                  {post.dropId && <span className="owner-badge">Drop</span>}
+                  {post.dropId && <span className="owner-badge">Drop {activeDrop && post.dropId === activeDrop.id ? formatLeft(activeDrop.expiresAt) : ''}</span>}
                   {post.isAnonymous && <span className="owner-badge">Anon Rep {post.anonReputation ?? 0}</span>}
+                  {post.firstWitnessUserId ? <span className="owner-badge">First Witness Locked</span> : <span className="owner-badge">First Witness Open</span>}
                   <span className="pulse-chip">Pulse {post.pulseCount}</span>
                   <time>{new Date(post.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time>
                 </div>

@@ -1,11 +1,23 @@
+import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useApp } from '../context/AppContext';
 
 export function LiveShareStream() {
-  const { freedomPosts, users, pulseLeaderboard, creatorSpotlight, questProgress, streak, currentUser, viewFreedomPost, reactToFreedomPost } = useApp();
+  const { freedomPosts, users, activeDrop, pulseLeaderboard, creatorSpotlight, questProgress, streak, currentUser, viewFreedomPost, reactToFreedomPost } = useApp();
   const recent = freedomPosts.slice(0, 10);
   const onlineUserIds = new Set(users.map((u) => u.id));
   const activeSharers = new Set(freedomPosts.filter((p) => onlineUserIds.has(p.userId)).map((p) => p.userId)).size;
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  const formatLeft = (expiresAt: number) => {
+    const left = Math.max(0, expiresAt - now);
+    const m = Math.floor(left / 60000);
+    const s = Math.floor((left % 60000) / 1000);
+    return `${m}:${s.toString().padStart(2, '0')}`;
+  };
   const questCards = [
     { name: 'Witness 5 Pulses', value: Math.min(questProgress.witnessCount, 5), max: 5 },
     { name: 'Post 1 Share', value: Math.min(questProgress.postsCount, 1), max: 1 },
@@ -78,6 +90,8 @@ export function LiveShareStream() {
             <div className="share-meta">
               <span className="pulse-chip">Pulse {post.pulseCount}</span>
               <span className="owner-badge">Owner {post.currentOwnerUserId === post.userId ? 'Creator' : 'Relay'}</span>
+              {post.firstWitnessUserId ? <span className="owner-badge">Locked</span> : <span className="owner-badge">Open</span>}
+              {post.dropId && activeDrop && post.dropId === activeDrop.id && <span className="owner-badge">Drop {formatLeft(activeDrop.expiresAt)}</span>}
             </div>
             {post.text && <p>{post.text}</p>}
             {post.imageDataUrl && <img src={post.imageDataUrl} alt="share" />}

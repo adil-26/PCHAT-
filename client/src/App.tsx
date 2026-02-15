@@ -7,13 +7,14 @@ import { ChatRoom } from './components/ChatRoom';
 import { FreedomWall } from './components/FreedomWall';
 import { LiveShareStream } from './components/LiveShareStream';
 import { ConfessionsPage } from './components/ConfessionsPage';
+import { AuraHuntPage } from './components/AuraHuntPage';
 import { IncomingCall } from './components/IncomingCall';
 import { ActiveCall } from './components/ActiveCall';
 import './App.css';
 
 function AppContent() {
   const { currentUser, logout, connected, incomingCall, activeCall, users, nodeProfile, claimDailyNodeCharge } = useApp();
-  const [view, setView] = useState<'chat' | 'wall' | 'confession'>('chat');
+  const [view, setView] = useState<'chat' | 'wall' | 'confession' | 'hunt'>('chat');
   const [privacyShield, setPrivacyShield] = useState(false);
 
   useEffect(() => {
@@ -37,6 +38,11 @@ function AppContent() {
   const today = new Date().toISOString().slice(0, 10);
   const canClaimDaily = !!nodeProfile && nodeProfile.lastDailyClaimDate !== today;
   const nodeEnergy = nodeProfile?.energy ?? 0;
+  const skin =
+    !nodeProfile ? 'Dormant' :
+    nodeProfile.level >= 20 ? 'Nova' :
+    nodeProfile.level >= 12 ? 'Flux' :
+    nodeProfile.level >= 6 ? 'Neon' : 'Rookie';
 
   return (
     <div className="app-layout">
@@ -52,12 +58,16 @@ function AppContent() {
           <button type="button" className={view === 'confession' ? 'active' : ''} onClick={() => setView('confession')}>
             Confessions
           </button>
+          <button type="button" className={view === 'hunt' ? 'active' : ''} onClick={() => setView('hunt')}>
+            Aura Hunt
+          </button>
         </div>
         <div className="header-right">
           {nodeProfile && (
             <div className="node-panel">
               <div className="node-row">
                 <span className="node-pill">Node L{nodeProfile.level}</span>
+                <span className={`node-skin skin-${skin.toLowerCase()}`}>{skin}</span>
                 <span className="node-xp">{nodeProfile.xp} XP</span>
                 <button type="button" className="charge-btn" onClick={claimDailyNodeCharge} disabled={!canClaimDaily}>
                   {canClaimDaily ? 'Daily Charge' : 'Charged'}
@@ -110,7 +120,7 @@ function AppContent() {
                 <FreedomWall />
               </section>
             </motion.div>
-          ) : (
+          ) : view === 'confession' ? (
             <motion.div
               key="confession-page"
               className="page-shell wall-page"
@@ -121,6 +131,19 @@ function AppContent() {
             >
               <section className="wall-content">
                 <ConfessionsPage />
+              </section>
+            </motion.div>
+          ) : (
+            <motion.div
+              key="hunt-page"
+              className="page-shell wall-page"
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.22 }}
+            >
+              <section className="wall-content">
+                <AuraHuntPage />
               </section>
             </motion.div>
           )}

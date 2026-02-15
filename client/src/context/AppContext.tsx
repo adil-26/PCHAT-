@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { createSocket } from '../lib/socket';
 import type { SocketClient } from '../lib/socket';
-import type { Confession, CreatorSpotlight, DropEvent, FreedomPost, Message, NodeProfile, PulseScore, QuestProgress, Room, StreakState, User } from '../types';
+import type { AuraZone, BorrowRequest, Confession, CreatorSpotlight, DropEvent, FreedomPost, Message, NodeProfile, PulseScore, QuestProgress, Room, StreakState, User } from '../types';
 
 interface AppState {
   currentUser: User | null;
@@ -21,6 +21,9 @@ interface AppState {
   activeDrop: DropEvent | null;
   confessions: Confession[];
   nodeProfile: NodeProfile | null;
+  auraZones: AuraZone[];
+  auraPoints: number;
+  incomingBorrowRequests: BorrowRequest[];
 }
 
 const defaultState: AppState = {
@@ -41,6 +44,9 @@ const defaultState: AppState = {
   activeDrop: null,
   confessions: [],
   nodeProfile: null,
+  auraZones: [],
+  auraPoints: 0,
+  incomingBorrowRequests: [],
 };
 
 type AppContextValue = Omit<AppState, 'messagesByRoom'> & {
@@ -56,6 +62,9 @@ type AppContextValue = Omit<AppState, 'messagesByRoom'> & {
   claimDailyNodeCharge: () => void;
   postConfession: (text: string, isAnonymous: boolean) => void;
   removeConfession: (confessionId: string) => void;
+  claimAuraZone: (zoneId: string, lat: number, lng: number) => void;
+  requestBorrowAura: (zoneId: string, lat: number, lng: number) => void;
+  respondBorrowAura: (zoneId: string, requesterId: string, approve: boolean) => void;
   removeFreedomPost: (postId: string) => void;
   setIncomingCall: (call: AppState['incomingCall']) => void;
   setActiveCall: (call: AppState['activeCall']) => void;
@@ -131,6 +140,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return { ...defaultState, currentUser: user };
   });
   const currentUserRef = useRef<User | null>(null);
+  const vibeQuestPostIdsRef = useRef<Set<string>>(new Set());
 
   const socket = useMemo(() => createSocket(), []);
 
@@ -264,7 +274,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         .slice(0, 250);
       setState((s) => ({ ...s, freedomPosts: normalized }));
     });
-    socket.on('wall:update', (payload: { postId: string; currentOwnerUserId: string; pulseCount: number; viewerIds: string[]; vibeCounts?: Record<string, number> }) => {
+    socket.on('wall:update', (payload: { postId: string; currentOwnerUserId: string; pulseCount: number; viewerIds: string[]; vibeCounts?: Record<string, number>; firstWitnessUserId?: string }) => {
       setState((s) => ({
         ...s,
         freedomPosts: s.freedomPosts.map((post) =>
@@ -275,6 +285,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
                 pulseCount: payload.pulseCount,
                 viewerIds: payload.viewerIds,
                 vibeCounts: payload.vibeCounts ?? post.vibeCounts,
+                firstWitnessUserId: payload.firstWitnessUserId ?? post.firstWitnessUserId,
               }
             : post
         ),
@@ -304,6 +315,26 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     socket.on('confession:remove', ({ confessionId }: { confessionId: string }) => {
       setState((s) => ({ ...s, confessions: s.confessions.filter((c) => c.id !== confessionId) }));
     });
+    socket.on('hunt:snapshot', (payload: { zones: AuraZone[]; points: number }) => {
+      setState((s) => ({ ...s, auraZones: payload.zones, auraPoints: payload.points }));
+    });
+    socket.on('hunt:points', (payload: { points: number }) => {
+      setState((s) => ({ ...s, auraPoints: payload.points }));
+    });
+    socket.on('hunt:update', (payload: { zones: AuraZone[] }) => {
+      setState((s) => ({ ...s, auraZones: payload.zones }));
+    });
+    socket.on('hunt:borrow:incoming', (req: BorrowRequest) => {
+      setState((s) => ({ ...s, incomingBorrowRequests: [req, ...s.incomingBorrowRequests].slice(0, 25) }));
+    });
+    socket.on('hunt:borrow:result', (payload: { zoneId: string; requesterId: string; approved: boolean }) => {
+      setState((s) => ({
+        ...s,
+        incomingBorrowRequests: s.incomingBorrowRequests.filter(
+          (r) => !(r.zoneId === payload.zoneId && r.fromUserId === payload.requesterId),
+        ),
+      }));
+    });
     return () => {
       socket.off('connect');
       socket.off('disconnect');
@@ -323,6 +354,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       socket.off('confession:snapshot');
       socket.off('confession:new');
       socket.off('confession:remove');
+      socket.off('hunt:snapshot');
+      socket.off('hunt:points');
+      socket.off('hunt:update');
+      socket.off('hunt:borrow:incoming');
+      socket.off('hunt:borrow:result');
     };
   }, [socket, markStreakAction]);
 
@@ -437,10 +473,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const reactToFreedomPost = useCallback(
     (postId: string, vibe: 'real' | 'wild' | 'deep' | 'w') => {
       socket.emit('wall:react', { postId, vibe });
-      setState((s) => ({
-        ...s,
-        questProgress: { ...s.questProgress, vibesCount: s.questProgress.vibesCount + 1 },
-      }));
+      if (!vibeQuestPostIdsRef.current.has(postId)) {
+        vibeQuestPostIdsRef.current.add(postId);
+        setState((s) => ({
+          ...s,
+          questProgress: { ...s.questProgress, vibesCount: s.questProgress.vibesCount + 1 },
+        }));
+      }
       grantNodeReward(3, 2);
     },
     [socket, grantNodeReward]
@@ -485,6 +524,33 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [socket]
   );
 
+  const claimAuraZone = useCallback(
+    (zoneId: string, lat: number, lng: number) => {
+      socket.emit('hunt:claim', { zoneId, lat, lng });
+    },
+    [socket],
+  );
+
+  const requestBorrowAura = useCallback(
+    (zoneId: string, lat: number, lng: number) => {
+      socket.emit('hunt:borrow:request', { zoneId, lat, lng });
+    },
+    [socket],
+  );
+
+  const respondBorrowAura = useCallback(
+    (zoneId: string, requesterId: string, approve: boolean) => {
+      socket.emit('hunt:borrow:respond', { zoneId, requesterId, approve });
+      setState((s) => ({
+        ...s,
+        incomingBorrowRequests: s.incomingBorrowRequests.filter(
+          (r) => !(r.zoneId === zoneId && r.fromUserId === requesterId),
+        ),
+      }));
+    },
+    [socket],
+  );
+
   const setIncomingCall = useCallback((incomingCall: AppState['incomingCall']) => {
     setState((s) => ({ ...s, incomingCall }));
   }, []);
@@ -509,11 +575,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       claimDailyNodeCharge,
       postConfession,
       removeConfession,
+      claimAuraZone,
+      requestBorrowAura,
+      respondBorrowAura,
       removeFreedomPost,
       setIncomingCall,
       setActiveCall,
     }),
-    [state, messages, socket, login, logout, selectRoom, sendMessage, startChat, postFreedom, viewFreedomPost, reactToFreedomPost, claimDailyNodeCharge, postConfession, removeConfession, removeFreedomPost, setIncomingCall, setActiveCall]
+    [state, messages, socket, login, logout, selectRoom, sendMessage, startChat, postFreedom, viewFreedomPost, reactToFreedomPost, claimDailyNodeCharge, postConfession, removeConfession, claimAuraZone, requestBorrowAura, respondBorrowAura, removeFreedomPost, setIncomingCall, setActiveCall]
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

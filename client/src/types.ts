@@ -36,6 +36,7 @@ export interface FreedomPost {
   chainDepth?: number;
   contributors?: string[];
   dropId?: string;
+  firstWitnessUserId?: string;
 }
 
 export interface PulseScore {
@@ -88,6 +89,26 @@ export interface NodeProfile {
   energy: number;
   lastSeenAt: number;
   lastDailyClaimDate: string | null;
+}
+
+export interface AuraZone {
+  id: string;
+  title: string;
+  lat: number;
+  lng: number;
+  radiusMeters: number;
+  reward: number;
+  expiresAt: number;
+  claimedByUserId?: string;
+  claimedByUsername?: string;
+  borrowedCount?: number;
+  borrowedByMe?: boolean;
+}
+
+export interface BorrowRequest {
+  zoneId: string;
+  fromUserId: string;
+  fromUsername: string;
 }
 
 export type CallType = 'audio' | 'video';

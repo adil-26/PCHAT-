@@ -27,6 +27,7 @@ const wallPosts = new Map<
     chainDepth?: number;
     contributors?: string[];
     dropId?: string;
+    firstWitnessUserId?: string;
   }
 >();
 const pulseScores = new Map<string, { username: string; score: number }>();
@@ -43,6 +44,26 @@ const DROP_PROMPTS = [
   'What are you building in silence?',
 ];
 let activeDrop: { id: string; prompt: string; startedAt: number; expiresAt: number } | null = null;
+
+const AURA_DROP_DURATION_MS = 30 * 60 * 1000;
+const MAX_HUNT_DISTANCE_METERS = 4000;
+const auraPointsByUser = new Map<string, number>();
+const pendingBorrowRequests = new Map<string, Set<string>>();
+const auraZones = new Map<
+  string,
+  {
+    id: string;
+    title: string;
+    lat: number;
+    lng: number;
+    radiusMeters: number;
+    reward: number;
+    expiresAt: number;
+    claimedByUserId?: string;
+    claimedByUsername?: string;
+    borrowedBy: Set<string>;
+  }
+>();
 
 function isAllowedDataUrl(value?: string, kind?: 'image' | 'video') {
   if (!value) return false;
@@ -102,6 +123,7 @@ function serializePost(post: {
   chainDepth?: number;
   contributors?: string[];
   dropId?: string;
+  firstWitnessUserId?: string;
 }) {
   return {
     id: post.id,
@@ -121,6 +143,7 @@ function serializePost(post: {
     chainDepth: post.chainDepth ?? 0,
     contributors: post.contributors ?? [post.userId],
     dropId: post.dropId,
+    firstWitnessUserId: post.firstWitnessUserId,
   };
 }
 
@@ -130,6 +153,63 @@ function pushDrop(io: Server) {
   const prompt = DROP_PROMPTS[Math.floor(Math.random() * DROP_PROMPTS.length)];
   activeDrop = { id, prompt, startedAt: now, expiresAt: now + DROP_DURATION_MS };
   io.emit('wall:drop', activeDrop);
+}
+
+function metersBetween(lat1: number, lon1: number, lat2: number, lon2: number) {
+  const R = 6371000;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+function serializeAuraZones() {
+  return Array.from(auraZones.values())
+    .filter((zone) => zone.expiresAt > Date.now())
+    .map((zone) => ({
+      id: zone.id,
+      title: zone.title,
+      lat: zone.lat,
+      lng: zone.lng,
+      radiusMeters: zone.radiusMeters,
+      reward: zone.reward,
+      expiresAt: zone.expiresAt,
+      claimedByUserId: zone.claimedByUserId,
+      claimedByUsername: zone.claimedByUsername,
+      borrowedCount: zone.borrowedBy.size,
+    }));
+}
+
+function serializeAuraZonesForUser(userId?: string) {
+  return serializeAuraZones().map((zone) => ({
+    ...zone,
+    borrowedByMe: userId ? auraZones.get(zone.id)?.borrowedBy.has(userId) ?? false : false,
+  }));
+}
+
+function emitAuraUpdate(io: Server) {
+  for (const user of users.values()) {
+    io.to(user.socketId).emit('hunt:update', { zones: serializeAuraZonesForUser(user.id) });
+  }
+}
+
+function seedAuraZone() {
+  const now = Date.now();
+  const zone = {
+    id: uuid(),
+    title: ['Skyline Pulse', 'Street Echo', 'Neon Orbit', 'Hidden Aura'][Math.floor(Math.random() * 4)],
+    // Default sample coordinates (NYC area); replace with your own drops as needed.
+    lat: 40.73061 + (Math.random() - 0.5) * 0.02,
+    lng: -73.935242 + (Math.random() - 0.5) * 0.02,
+    radiusMeters: 220,
+    reward: 60 + Math.floor(Math.random() * 80),
+    expiresAt: now + AURA_DROP_DURATION_MS,
+    borrowedBy: new Set<string>(),
+  };
+  auraZones.set(zone.id, zone);
 }
 
 function transferPulse(io: Server, postId: string, nextOwnerUserId: string) {
@@ -148,6 +228,7 @@ function transferPulse(io: Server, postId: string, nextOwnerUserId: string) {
     pulseCount: post.pulseCount,
     viewerIds: Array.from(post.viewerIds),
     vibeCounts: post.vibeCounts,
+    firstWitnessUserId: post.firstWitnessUserId,
   });
   emitPulseLeaderboard(io);
   emitCreatorSpotlight(io);
@@ -159,6 +240,16 @@ export function registerSocketHandlers(io: Server) {
   if (!activeDrop) {
     pushDrop(io);
     setInterval(() => pushDrop(io), DROP_INTERVAL_MS);
+  }
+  if (auraZones.size === 0) {
+    seedAuraZone();
+    setInterval(() => {
+      for (const [zoneId, zone] of auraZones.entries()) {
+        if (zone.expiresAt <= Date.now()) auraZones.delete(zoneId);
+      }
+      if (auraZones.size < 2) seedAuraZone();
+      emitAuraUpdate(io);
+    }, 60_000);
   }
   io.on('connection', (socket: Socket) => {
     socket.on('user:join', (payload: { userId: string; username: string }) => {
@@ -183,6 +274,10 @@ export function registerSocketHandlers(io: Server) {
       emitPulseLeaderboard(io);
       emitCreatorSpotlight(io);
       socket.emit('wall:drop', activeDrop);
+      socket.emit('hunt:snapshot', {
+        zones: serializeAuraZonesForUser(userId),
+        points: auraPointsByUser.get(userId) ?? 0,
+      });
       socket.emit('confession:snapshot', Array.from(confessions.values()).sort((a, b) => b.at - a.at).slice(0, 300).map((c) => ({
         ...c,
       })));
@@ -288,6 +383,7 @@ export function registerSocketHandlers(io: Server) {
         chainDepth: 0,
         contributors: [userId],
         dropId: activeDrop && activeDrop.expiresAt > Date.now() ? activeDrop.id : undefined,
+        firstWitnessUserId: undefined as string | undefined,
       };
       wallPosts.set(postId, post);
       wallPostOwners.set(postId, userId);
@@ -326,6 +422,7 @@ export function registerSocketHandlers(io: Server) {
         chainDepth: (parent.chainDepth ?? 0) + 1,
         contributors,
         dropId: activeDrop && activeDrop.expiresAt > Date.now() ? activeDrop.id : parent.dropId,
+        firstWitnessUserId: undefined as string | undefined,
       };
       wallPosts.set(postId, post);
       wallPostOwners.set(postId, userId);
@@ -340,7 +437,9 @@ export function registerSocketHandlers(io: Server) {
       if (!post) return;
       const isNewViewer = !post.viewerIds.has(userId);
       if (isNewViewer) post.viewerIds.add(userId);
-      if (isNewViewer && post.currentOwnerUserId !== userId) {
+      // First witness lock: only the first non-creator witness can trigger a takeover.
+      if (isNewViewer && post.currentOwnerUserId !== userId && !post.firstWitnessUserId) {
+        post.firstWitnessUserId = userId;
         transferPulse(io, post.id, userId);
         return;
       }
@@ -350,6 +449,7 @@ export function registerSocketHandlers(io: Server) {
         pulseCount: post.pulseCount,
         viewerIds: Array.from(post.viewerIds),
         vibeCounts: post.vibeCounts,
+        firstWitnessUserId: post.firstWitnessUserId,
       });
     });
 
@@ -369,6 +469,7 @@ export function registerSocketHandlers(io: Server) {
         pulseCount: post.pulseCount,
         viewerIds: Array.from(post.viewerIds),
         vibeCounts: post.vibeCounts,
+        firstWitnessUserId: post.firstWitnessUserId,
       });
       emitCreatorSpotlight(io);
       addAnonReputation(post.userId, 1);
@@ -412,6 +513,72 @@ export function registerSocketHandlers(io: Server) {
       io.emit('confession:remove', { confessionId: payload.confessionId });
     });
 
+    socket.on('hunt:claim', (payload: { zoneId: string; lat: number; lng: number }) => {
+      const userId = socket.data.userId;
+      if (!userId) return;
+      const zone = auraZones.get(payload.zoneId);
+      if (!zone || zone.expiresAt <= Date.now()) return;
+      if (zone.claimedByUserId) return;
+      const distance = metersBetween(payload.lat, payload.lng, zone.lat, zone.lng);
+      if (distance > MAX_HUNT_DISTANCE_METERS) return;
+      if (distance > zone.radiusMeters) return;
+      zone.claimedByUserId = userId;
+      zone.claimedByUsername = socket.data.username;
+      const next = (auraPointsByUser.get(userId) ?? 0) + zone.reward;
+      auraPointsByUser.set(userId, next);
+      io.to(socket.id).emit('hunt:points', { points: next });
+      emitAuraUpdate(io);
+    });
+
+    socket.on('hunt:borrow:request', (payload: { zoneId: string; lat: number; lng: number }) => {
+      const userId = socket.data.userId;
+      const username = socket.data.username;
+      if (!userId || !username) return;
+      const zone = auraZones.get(payload.zoneId);
+      if (!zone || !zone.claimedByUserId || zone.expiresAt <= Date.now()) return;
+      if (zone.claimedByUserId === userId) return;
+      if (zone.borrowedBy.has(userId)) return;
+      const distance = metersBetween(payload.lat, payload.lng, zone.lat, zone.lng);
+      if (distance > MAX_HUNT_DISTANCE_METERS) return;
+      const owner = users.get(zone.claimedByUserId);
+      if (!owner) return;
+      const set = pendingBorrowRequests.get(zone.id) ?? new Set<string>();
+      if (set.has(userId)) return;
+      set.add(userId);
+      pendingBorrowRequests.set(zone.id, set);
+      io.to(owner.socketId).emit('hunt:borrow:incoming', {
+        zoneId: zone.id,
+        fromUserId: userId,
+        fromUsername: username,
+      });
+    });
+
+    socket.on('hunt:borrow:respond', (payload: { zoneId: string; requesterId: string; approve: boolean }) => {
+      const userId = socket.data.userId;
+      if (!userId) return;
+      const zone = auraZones.get(payload.zoneId);
+      if (!zone || zone.claimedByUserId !== userId) return;
+      const pending = pendingBorrowRequests.get(zone.id);
+      if (!pending || !pending.has(payload.requesterId)) return;
+      pending.delete(payload.requesterId);
+      if (pending.size === 0) pendingBorrowRequests.delete(zone.id);
+      if (!payload.approve) {
+        io.emit('hunt:borrow:result', { zoneId: zone.id, requesterId: payload.requesterId, approved: false });
+        return;
+      }
+      zone.borrowedBy.add(payload.requesterId);
+      const borrowerGain = Math.max(1, Math.floor(zone.reward * 0.6));
+      const ownerGain = Math.max(1, Math.floor(zone.reward * 0.2));
+      auraPointsByUser.set(payload.requesterId, (auraPointsByUser.get(payload.requesterId) ?? 0) + borrowerGain);
+      auraPointsByUser.set(userId, (auraPointsByUser.get(userId) ?? 0) + ownerGain);
+      const owner = users.get(userId);
+      const borrower = users.get(payload.requesterId);
+      if (owner) io.to(owner.socketId).emit('hunt:points', { points: auraPointsByUser.get(userId) ?? 0 });
+      if (borrower) io.to(borrower.socketId).emit('hunt:points', { points: auraPointsByUser.get(payload.requesterId) ?? 0 });
+      io.emit('hunt:borrow:result', { zoneId: zone.id, requesterId: payload.requesterId, approved: true });
+      emitAuraUpdate(io);
+    });
+
     socket.on('disconnect', () => {
       const userId = socket.data.userId;
       if (userId) {
@@ -425,7 +592,8 @@ export function registerSocketHandlers(io: Server) {
             if (post.currentOwnerUserId !== userId) continue;
             const nextViewer = Array.from(post.viewerIds).find((viewerId) => viewerId !== userId && users.has(viewerId));
             if (nextViewer) {
-              transferPulse(io, post.id, nextViewer);
+              // Keep first-witness lock strict: handoff only if first witness was never claimed.
+              if (!post.firstWitnessUserId) transferPulse(io, post.id, nextViewer);
             } else {
               io.emit('wall:update', {
                 postId: post.id,
@@ -433,6 +601,7 @@ export function registerSocketHandlers(io: Server) {
                 pulseCount: post.pulseCount,
                 viewerIds: Array.from(post.viewerIds),
                 vibeCounts: post.vibeCounts,
+                firstWitnessUserId: post.firstWitnessUserId,
               });
             }
           }
