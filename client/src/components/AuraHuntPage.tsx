@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+ï»¿import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useApp } from '../context/AppContext';
 
@@ -47,7 +47,9 @@ export function AuraHuntPage() {
         const next = { lat: pos.coords.latitude, lng: pos.coords.longitude };
         setPosition(next);
         setStatus('Location updated.');
-        if (lootCamOn) updateHuntPresence(next.lat, next.lng, true);
+        // Always send presence for cluster loot logic.
+        // Public sharing still depends on Loot Cam state.
+        updateHuntPresence(next.lat, next.lng, lootCamOn);
       },
       () => setStatus('Location permission denied or unavailable.'),
       { enableHighAccuracy: true, timeout: 12000 },
@@ -55,9 +57,9 @@ export function AuraHuntPage() {
   };
 
   useEffect(() => {
-    if (!lootCamOn || !position) return;
+    if (!position) return;
     const id = window.setInterval(() => {
-      updateHuntPresence(position.lat, position.lng, true);
+      updateHuntPresence(position.lat, position.lng, lootCamOn);
     }, 8000);
     return () => window.clearInterval(id);
   }, [lootCamOn, position, updateHuntPresence]);
@@ -129,9 +131,9 @@ export function AuraHuntPage() {
             <div className="vibe-row compact">
               {nearbyHunters.map((hunter) => (
                 <span key={hunter.userId} className="owner-badge">
-                  {hunter.username} · {hunter.distanceBand}
+                  {hunter.username} - {hunter.distanceBand}
                   {hunter.isRunning && hunter.distanceToZoneMeters !== undefined
-                    ? ` · RUN ${hunter.distanceToZoneMeters}m`
+                    ? ` - RUN ${hunter.distanceToZoneMeters}m`
                     : ''}
                 </span>
               ))}
@@ -190,14 +192,14 @@ export function AuraHuntPage() {
               </header>
               <p>
                 Radius {zone.radiusMeters}m
-                {distance !== null ? ` · ${distance}m away` : ''}
+                {distance !== null ? ` - ${distance}m away` : ''}
               </p>
               <div className="vibe-row compact">
                 <span className="pulse-chip">Runners {zone.runnerCount ?? 0}</span>
               </div>
               {zone.claimedByUserId ? (
                 <p className="wall-empty">
-                  Claimed by {zone.claimedByUsername ?? 'Unknown'} · Borrowed {zone.borrowedCount ?? 0} times
+                  Claimed by {zone.claimedByUsername ?? 'Unknown'} - Borrowed {zone.borrowedCount ?? 0} times
                 </p>
               ) : (
                 <p className="wall-empty">Unclaimed drop</p>
