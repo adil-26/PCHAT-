@@ -1,4 +1,4 @@
-import { useState } from 'react';
+﻿import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { useApp } from '../context/AppContext';
 
@@ -24,7 +24,7 @@ export function Login() {
           animate={{ opacity: [0.8, 1, 0.8] }}
           transition={{ repeat: Infinity, duration: 2.4, repeatDelay: 0.3 }}
         />
-        <h1>Fchat Social Live</h1>
+        <h1>PULSELY</h1>
         <p>Jump in, share live thoughts, chat, and call with zero storage.</p>
         <form
           onSubmit={(e) => {
@@ -46,12 +46,12 @@ export function Login() {
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
           >
-            {connected ? 'Join' : 'Connecting…'}
+            {connected ? 'Join' : 'Connecting...'}
           </motion.button>
         </form>
         {!connected && (
           <motion.p className="status" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-            Connecting to server…
+            Connecting to server...
           </motion.p>
         )}
       </motion.div>

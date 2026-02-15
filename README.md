@@ -1,6 +1,6 @@
-﻿# Fchat Network
+﻿# PULSELY
 
-Fchat is a **real-time social network + messenger** focused on speed, freedom, and temporary live experiences.
+PULSELY is a **real-time social network + messenger** focused on speed, freedom, and temporary live experiences.
 
 It combines:
 - direct chat
@@ -15,7 +15,7 @@ No signup/password flow is required. A user is represented as a **device node**.
 
 Most social apps are permanent, profile-heavy, and algorithm-first.
 
-Fchat is built as a different model:
+PULSELY is built as a different model:
 - **live-first** interaction
 - **low-friction identity** (device node)
 - **ephemeral social content**
@@ -186,3 +186,4 @@ If you want durable data later, add PostgreSQL/Mongo/Redis and persist selected 
 ## License
 
 MIT
+

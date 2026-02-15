@@ -47,7 +47,7 @@ function AppContent() {
   return (
     <div className="app-layout">
       <header className="app-header">
-        <span className="logo">Fchat Network</span>
+        <span className="logo">PULSELY</span>
         <div className="view-tabs">
           <button type="button" className={view === 'chat' ? 'active' : ''} onClick={() => setView('chat')}>
             Chat Ops
@@ -150,7 +150,7 @@ function AppContent() {
         </AnimatePresence>
       </main>
       <div className="privacy-watermark" aria-hidden>
-        PRIVATE LIVE SESSION · {currentUser.username}
+        PRIVATE LIVE SESSION - {currentUser.username}
       </div>
       {privacyShield && (
         <div className="privacy-shield">
