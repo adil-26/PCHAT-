@@ -29,6 +29,8 @@ const io = new Server(httpServer, {
     },
     credentials: true,
   },
+  // Allow larger wall media payloads (base64 video/image posts).
+  maxHttpBufferSize: 16 * 1024 * 1024,
   pingTimeout: 60000,
   pingInterval: 25000,
 });

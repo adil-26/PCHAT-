@@ -21,13 +21,11 @@ export function Login() {
       >
         <motion.div
           className="login-icon"
-          animate={{ rotate: [0, 10, -10, 0] }}
-          transition={{ repeat: Infinity, duration: 2, repeatDelay: 1 }}
-        >
-          💬
-        </motion.div>
-        <h1>Realtime Messenger</h1>
-        <p>Enter your name to start chatting and calling</p>
+          animate={{ opacity: [0.8, 1, 0.8] }}
+          transition={{ repeat: Infinity, duration: 2.4, repeatDelay: 0.3 }}
+        />
+        <h1>Fchat Social Live</h1>
+        <p>Jump in, share live thoughts, chat, and call with zero storage.</p>
         <form
           onSubmit={(e) => {
             e.preventDefault();

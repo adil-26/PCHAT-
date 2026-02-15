@@ -29,7 +29,7 @@ export function IncomingCall({ fromUserId, fromUsername, type }: IncomingCallPro
           animate={{ scale: [1, 1.2, 1] }}
           transition={{ repeat: Infinity, duration: 1.5 }}
         >
-          {type === 'video' ? '📹' : '📞'}
+          {type === 'video' ? 'VIDEO' : 'AUDIO'}
         </motion.div>
         <p className="call-type">{type === 'video' ? 'Video' : 'Voice'} call</p>
         <p className="caller-name">{fromUsername}</p>

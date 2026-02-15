@@ -67,7 +67,7 @@ export function ChatList() {
                   title="Start chat"
                   onClick={() => openOrStartChat(peer)}
                 >
-                  💬
+                  Chat
                 </button>
                 <button
                   type="button"
@@ -75,7 +75,7 @@ export function ChatList() {
                   title="Voice call"
                   onClick={() => startCall(peer.id, 'audio')}
                 >
-                  📞
+                  Audio
                 </button>
                 <button
                   type="button"
@@ -83,7 +83,7 @@ export function ChatList() {
                   title="Video call"
                   onClick={() => startCall(peer.id, 'video')}
                 >
-                  📹
+                  Video
                 </button>
               </div>
             </div>
