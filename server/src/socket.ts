@@ -45,10 +45,14 @@ const DROP_PROMPTS = [
 ];
 let activeDrop: { id: string; prompt: string; startedAt: number; expiresAt: number } | null = null;
 let huntPresenceLoopStarted = false;
+let lastDynamicZoneAt = 0;
 
 const AURA_DROP_DURATION_MS = 30 * 60 * 1000;
 const MAX_HUNT_DISTANCE_METERS = 4000;
 const HUNT_PRESENCE_TTL_MS = 90_000;
+const MAX_DYNAMIC_ZONES = 6;
+const DYNAMIC_ZONE_MIN_SPACING_METERS = 1000;
+const DYNAMIC_ZONE_COOLDOWN_MS = 45_000;
 const auraPointsByUser = new Map<string, number>();
 const pendingBorrowRequests = new Map<string, Set<string>>();
 const huntPresence = new Map<
@@ -281,20 +285,92 @@ function emitHuntPresenceAll(io: Server) {
   }
 }
 
-function seedAuraZone() {
-  const now = Date.now();
+function createAuraZone(lat: number, lng: number, title: string, radiusMeters: number, reward: number) {
   const zone = {
     id: uuid(),
-    title: ['Skyline Pulse', 'Street Echo', 'Neon Orbit', 'Hidden Aura'][Math.floor(Math.random() * 4)],
-    // Default sample coordinates (NYC area); replace with your own drops as needed.
-    lat: 40.73061 + (Math.random() - 0.5) * 0.02,
-    lng: -73.935242 + (Math.random() - 0.5) * 0.02,
-    radiusMeters: 220,
-    reward: 60 + Math.floor(Math.random() * 80),
-    expiresAt: now + AURA_DROP_DURATION_MS,
+    title,
+    lat,
+    lng,
+    radiusMeters,
+    reward,
+    expiresAt: Date.now() + AURA_DROP_DURATION_MS,
     borrowedBy: new Set<string>(),
   };
   auraZones.set(zone.id, zone);
+}
+
+function seedAuraZone() {
+  createAuraZone(
+    40.73061 + (Math.random() - 0.5) * 0.02,
+    -73.935242 + (Math.random() - 0.5) * 0.02,
+    ['Skyline Pulse', 'Street Echo', 'Neon Orbit', 'Hidden Aura'][Math.floor(Math.random() * 4)],
+    220,
+    60 + Math.floor(Math.random() * 80),
+  );
+}
+
+function buildPresenceClusters() {
+  pruneHuntPresence();
+  const points = Array.from(huntPresence.values());
+  const clusters: Array<typeof points> = [];
+  const visited = new Set<number>();
+  for (let i = 0; i < points.length; i += 1) {
+    if (visited.has(i)) continue;
+    const queue = [i];
+    visited.add(i);
+    const componentIdx: number[] = [];
+    while (queue.length) {
+      const idx = queue.shift()!;
+      componentIdx.push(idx);
+      for (let j = 0; j < points.length; j += 1) {
+        if (visited.has(j)) continue;
+        const d = metersBetween(points[idx].lat, points[idx].lng, points[j].lat, points[j].lng);
+        if (d <= MAX_HUNT_DISTANCE_METERS) {
+          visited.add(j);
+          queue.push(j);
+        }
+      }
+    }
+    const cluster = componentIdx.map((idx) => points[idx]);
+    if (cluster.length >= 2) clusters.push(cluster);
+  }
+  return clusters;
+}
+
+function trySpawnClusterZone() {
+  const now = Date.now();
+  if (now - lastDynamicZoneAt < DYNAMIC_ZONE_COOLDOWN_MS) return false;
+  const activeCount = serializeAuraZones().length;
+  if (activeCount >= MAX_DYNAMIC_ZONES) return false;
+  const clusters = buildPresenceClusters();
+  if (!clusters.length) return false;
+  clusters.sort((a, b) => b.length - a.length);
+  for (const cluster of clusters) {
+    const centroid = cluster.reduce(
+      (acc, p) => ({ lat: acc.lat + p.lat, lng: acc.lng + p.lng }),
+      { lat: 0, lng: 0 },
+    );
+    const baseLat = centroid.lat / cluster.length;
+    const baseLng = centroid.lng / cluster.length;
+    const tooClose = Array.from(auraZones.values())
+      .filter((z) => z.expiresAt > now)
+      .some((z) => metersBetween(z.lat, z.lng, baseLat, baseLng) < DYNAMIC_ZONE_MIN_SPACING_METERS);
+    if (tooClose) continue;
+    const jitterLat = (Math.random() - 0.5) * 0.003;
+    const jitterLng = (Math.random() - 0.5) * 0.003;
+    const radiusMeters = Math.min(340, 180 + cluster.length * 18);
+    const reward = Math.min(220, 80 + cluster.length * 18 + Math.floor(Math.random() * 30));
+    createAuraZone(
+      baseLat + jitterLat,
+      baseLng + jitterLng,
+      `Cluster Loot x${cluster.length}`,
+      radiusMeters,
+      reward,
+    );
+    lastDynamicZoneAt = now;
+    return true;
+  }
+  return false;
 }
 
 function transferPulse(io: Server, postId: string, nextOwnerUserId: string) {
@@ -332,6 +408,7 @@ export function registerSocketHandlers(io: Server) {
       for (const [zoneId, zone] of auraZones.entries()) {
         if (zone.expiresAt <= Date.now()) auraZones.delete(zoneId);
       }
+      trySpawnClusterZone();
       if (auraZones.size < 2) seedAuraZone();
       emitAuraUpdate(io);
     }, 60_000);
@@ -339,6 +416,7 @@ export function registerSocketHandlers(io: Server) {
   if (!huntPresenceLoopStarted) {
     huntPresenceLoopStarted = true;
     setInterval(() => {
+      trySpawnClusterZone();
       emitHuntPresenceAll(io);
       emitAuraUpdate(io);
     }, 15_000);
@@ -688,7 +766,9 @@ export function registerSocketHandlers(io: Server) {
         runningZoneId: prev?.runningZoneId ?? null,
         updatedAt: Date.now(),
       });
+      trySpawnClusterZone();
       emitHuntPresenceAll(io);
+      emitAuraUpdate(io);
     });
 
     socket.on('hunt:run:start', (payload: { zoneId: string; lat: number; lng: number }) => {
@@ -708,6 +788,7 @@ export function registerSocketHandlers(io: Server) {
         runningZoneId: zone.id,
         updatedAt: Date.now(),
       });
+      trySpawnClusterZone();
       emitHuntPresenceAll(io);
       emitAuraUpdate(io);
     });
