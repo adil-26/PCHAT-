@@ -44,11 +44,25 @@ const DROP_PROMPTS = [
   'What are you building in silence?',
 ];
 let activeDrop: { id: string; prompt: string; startedAt: number; expiresAt: number } | null = null;
+let huntPresenceLoopStarted = false;
 
 const AURA_DROP_DURATION_MS = 30 * 60 * 1000;
 const MAX_HUNT_DISTANCE_METERS = 4000;
+const HUNT_PRESENCE_TTL_MS = 90_000;
 const auraPointsByUser = new Map<string, number>();
 const pendingBorrowRequests = new Map<string, Set<string>>();
+const huntPresence = new Map<
+  string,
+  {
+    userId: string;
+    username: string;
+    lat: number;
+    lng: number;
+    shareNearby: boolean;
+    runningZoneId: string | null;
+    updatedAt: number;
+  }
+>();
 const auraZones = new Map<
   string,
   {
@@ -166,7 +180,34 @@ function metersBetween(lat1: number, lon1: number, lat2: number, lon2: number) {
   return 2 * R * Math.asin(Math.sqrt(a));
 }
 
+function distanceBand(meters: number) {
+  if (meters < 500) return '<500m';
+  if (meters < 1000) return '0.5-1km';
+  if (meters < 2000) return '1-2km';
+  return '2-4km';
+}
+
+function pruneHuntPresence() {
+  const now = Date.now();
+  for (const [userId, presence] of huntPresence.entries()) {
+    if (now - presence.updatedAt > HUNT_PRESENCE_TTL_MS) {
+      huntPresence.delete(userId);
+    }
+  }
+}
+
+function getRunnerCountsByZone() {
+  pruneHuntPresence();
+  const counts = new Map<string, number>();
+  for (const presence of huntPresence.values()) {
+    if (!presence.runningZoneId) continue;
+    counts.set(presence.runningZoneId, (counts.get(presence.runningZoneId) ?? 0) + 1);
+  }
+  return counts;
+}
+
 function serializeAuraZones() {
+  const runnerCounts = getRunnerCountsByZone();
   return Array.from(auraZones.values())
     .filter((zone) => zone.expiresAt > Date.now())
     .map((zone) => ({
@@ -180,6 +221,7 @@ function serializeAuraZones() {
       claimedByUserId: zone.claimedByUserId,
       claimedByUsername: zone.claimedByUsername,
       borrowedCount: zone.borrowedBy.size,
+      runnerCount: runnerCounts.get(zone.id) ?? 0,
     }));
 }
 
@@ -193,6 +235,49 @@ function serializeAuraZonesForUser(userId?: string) {
 function emitAuraUpdate(io: Server) {
   for (const user of users.values()) {
     io.to(user.socketId).emit('hunt:update', { zones: serializeAuraZonesForUser(user.id) });
+  }
+}
+
+function emitHuntPresenceForUser(io: Server, userId: string) {
+  const self = huntPresence.get(userId);
+  const socketId = users.get(userId)?.socketId;
+  if (!socketId) return;
+  if (!self) {
+    io.to(socketId).emit('hunt:presence', { nearbyUsers: [], sharing: false, runningZoneId: null });
+    return;
+  }
+  const nearbyUsers = Array.from(huntPresence.values())
+    .filter((p) => p.userId !== userId && p.shareNearby)
+    .map((p) => {
+      const dist = metersBetween(self.lat, self.lng, p.lat, p.lng);
+      return { p, dist };
+    })
+    .filter((x) => x.dist <= MAX_HUNT_DISTANCE_METERS)
+    .sort((a, b) => a.dist - b.dist)
+    .slice(0, 24)
+    .map(({ p, dist }) => {
+      const zone = p.runningZoneId ? auraZones.get(p.runningZoneId) : undefined;
+      const distanceToZoneMeters = zone ? Math.round(metersBetween(p.lat, p.lng, zone.lat, zone.lng)) : undefined;
+      return {
+        userId: p.userId,
+        username: p.username,
+        distanceBand: distanceBand(dist),
+        isRunning: !!p.runningZoneId,
+        runningZoneId: p.runningZoneId ?? undefined,
+        distanceToZoneMeters,
+      };
+    });
+  io.to(socketId).emit('hunt:presence', {
+    nearbyUsers,
+    sharing: self.shareNearby,
+    runningZoneId: self.runningZoneId,
+  });
+}
+
+function emitHuntPresenceAll(io: Server) {
+  pruneHuntPresence();
+  for (const user of users.values()) {
+    emitHuntPresenceForUser(io, user.id);
   }
 }
 
@@ -251,6 +336,13 @@ export function registerSocketHandlers(io: Server) {
       emitAuraUpdate(io);
     }, 60_000);
   }
+  if (!huntPresenceLoopStarted) {
+    huntPresenceLoopStarted = true;
+    setInterval(() => {
+      emitHuntPresenceAll(io);
+      emitAuraUpdate(io);
+    }, 15_000);
+  }
   io.on('connection', (socket: Socket) => {
     socket.on('user:join', (payload: { userId: string; username: string }) => {
       const { userId, username } = payload;
@@ -278,6 +370,8 @@ export function registerSocketHandlers(io: Server) {
         zones: serializeAuraZonesForUser(userId),
         points: auraPointsByUser.get(userId) ?? 0,
       });
+      emitHuntPresenceForUser(io, userId);
+      emitAuraUpdate(io);
       socket.emit('confession:snapshot', Array.from(confessions.values()).sort((a, b) => b.at - a.at).slice(0, 300).map((c) => ({
         ...c,
       })));
@@ -579,9 +673,70 @@ export function registerSocketHandlers(io: Server) {
       emitAuraUpdate(io);
     });
 
+    socket.on('hunt:presence:update', (payload: { lat: number; lng: number; shareNearby: boolean }) => {
+      const userId = socket.data.userId;
+      const username = socket.data.username;
+      if (!userId || !username) return;
+      if (!Number.isFinite(payload.lat) || !Number.isFinite(payload.lng)) return;
+      const prev = huntPresence.get(userId);
+      huntPresence.set(userId, {
+        userId,
+        username,
+        lat: payload.lat,
+        lng: payload.lng,
+        shareNearby: !!payload.shareNearby,
+        runningZoneId: prev?.runningZoneId ?? null,
+        updatedAt: Date.now(),
+      });
+      emitHuntPresenceAll(io);
+    });
+
+    socket.on('hunt:run:start', (payload: { zoneId: string; lat: number; lng: number }) => {
+      const userId = socket.data.userId;
+      const username = socket.data.username;
+      if (!userId || !username) return;
+      const zone = auraZones.get(payload.zoneId);
+      if (!zone || zone.expiresAt <= Date.now()) return;
+      const distance = metersBetween(payload.lat, payload.lng, zone.lat, zone.lng);
+      if (distance > MAX_HUNT_DISTANCE_METERS) return;
+      huntPresence.set(userId, {
+        userId,
+        username,
+        lat: payload.lat,
+        lng: payload.lng,
+        shareNearby: true,
+        runningZoneId: zone.id,
+        updatedAt: Date.now(),
+      });
+      emitHuntPresenceAll(io);
+      emitAuraUpdate(io);
+    });
+
+    socket.on('hunt:run:stop', (payload: { lat: number; lng: number }) => {
+      const userId = socket.data.userId;
+      const username = socket.data.username;
+      if (!userId || !username) return;
+      const prev = huntPresence.get(userId);
+      if (!prev) return;
+      huntPresence.set(userId, {
+        ...prev,
+        username,
+        lat: Number.isFinite(payload.lat) ? payload.lat : prev.lat,
+        lng: Number.isFinite(payload.lng) ? payload.lng : prev.lng,
+        runningZoneId: null,
+        updatedAt: Date.now(),
+      });
+      emitHuntPresenceAll(io);
+      emitAuraUpdate(io);
+    });
+
     socket.on('disconnect', () => {
       const userId = socket.data.userId;
       if (userId) {
+        const hadRunning = !!huntPresence.get(userId)?.runningZoneId;
+        huntPresence.delete(userId);
+        if (hadRunning) emitAuraUpdate(io);
+        emitHuntPresenceAll(io);
         const timer = setTimeout(() => {
           const activeSocket = users.get(userId)?.socketId;
           if (activeSocket && activeSocket !== socket.id) return;

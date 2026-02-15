@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { createSocket } from '../lib/socket';
 import type { SocketClient } from '../lib/socket';
-import type { AuraZone, BorrowRequest, Confession, CreatorSpotlight, DropEvent, FreedomPost, Message, NodeProfile, PulseScore, QuestProgress, Room, StreakState, User } from '../types';
+import type { AuraZone, BorrowRequest, Confession, CreatorSpotlight, DropEvent, FreedomPost, Message, NearbyHunter, NodeProfile, PulseScore, QuestProgress, Room, StreakState, User } from '../types';
 
 interface AppState {
   currentUser: User | null;
@@ -24,6 +24,9 @@ interface AppState {
   auraZones: AuraZone[];
   auraPoints: number;
   incomingBorrowRequests: BorrowRequest[];
+  nearbyHunters: NearbyHunter[];
+  huntSharing: boolean;
+  runningZoneId: string | null;
 }
 
 const defaultState: AppState = {
@@ -47,6 +50,9 @@ const defaultState: AppState = {
   auraZones: [],
   auraPoints: 0,
   incomingBorrowRequests: [],
+  nearbyHunters: [],
+  huntSharing: false,
+  runningZoneId: null,
 };
 
 type AppContextValue = Omit<AppState, 'messagesByRoom'> & {
@@ -65,6 +71,9 @@ type AppContextValue = Omit<AppState, 'messagesByRoom'> & {
   claimAuraZone: (zoneId: string, lat: number, lng: number) => void;
   requestBorrowAura: (zoneId: string, lat: number, lng: number) => void;
   respondBorrowAura: (zoneId: string, requesterId: string, approve: boolean) => void;
+  updateHuntPresence: (lat: number, lng: number, shareNearby: boolean) => void;
+  startAuraRun: (zoneId: string, lat: number, lng: number) => void;
+  stopAuraRun: (lat: number, lng: number) => void;
   removeFreedomPost: (postId: string) => void;
   setIncomingCall: (call: AppState['incomingCall']) => void;
   setActiveCall: (call: AppState['activeCall']) => void;
@@ -335,6 +344,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         ),
       }));
     });
+    socket.on('hunt:presence', (payload: { nearbyUsers: NearbyHunter[]; sharing: boolean; runningZoneId: string | null }) => {
+      setState((s) => ({
+        ...s,
+        nearbyHunters: payload.nearbyUsers,
+        huntSharing: payload.sharing,
+        runningZoneId: payload.runningZoneId,
+      }));
+    });
     return () => {
       socket.off('connect');
       socket.off('disconnect');
@@ -359,6 +376,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       socket.off('hunt:update');
       socket.off('hunt:borrow:incoming');
       socket.off('hunt:borrow:result');
+      socket.off('hunt:presence');
     };
   }, [socket, markStreakAction]);
 
@@ -551,6 +569,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [socket],
   );
 
+  const updateHuntPresence = useCallback(
+    (lat: number, lng: number, shareNearby: boolean) => {
+      socket.emit('hunt:presence:update', { lat, lng, shareNearby });
+    },
+    [socket],
+  );
+
+  const startAuraRun = useCallback(
+    (zoneId: string, lat: number, lng: number) => {
+      socket.emit('hunt:run:start', { zoneId, lat, lng });
+    },
+    [socket],
+  );
+
+  const stopAuraRun = useCallback(
+    (lat: number, lng: number) => {
+      socket.emit('hunt:run:stop', { lat, lng });
+    },
+    [socket],
+  );
+
   const setIncomingCall = useCallback((incomingCall: AppState['incomingCall']) => {
     setState((s) => ({ ...s, incomingCall }));
   }, []);
@@ -578,11 +617,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       claimAuraZone,
       requestBorrowAura,
       respondBorrowAura,
+      updateHuntPresence,
+      startAuraRun,
+      stopAuraRun,
       removeFreedomPost,
       setIncomingCall,
       setActiveCall,
     }),
-    [state, messages, socket, login, logout, selectRoom, sendMessage, startChat, postFreedom, viewFreedomPost, reactToFreedomPost, claimDailyNodeCharge, postConfession, removeConfession, claimAuraZone, requestBorrowAura, respondBorrowAura, removeFreedomPost, setIncomingCall, setActiveCall]
+    [state, messages, socket, login, logout, selectRoom, sendMessage, startChat, postFreedom, viewFreedomPost, reactToFreedomPost, claimDailyNodeCharge, postConfession, removeConfession, claimAuraZone, requestBorrowAura, respondBorrowAura, updateHuntPresence, startAuraRun, stopAuraRun, removeFreedomPost, setIncomingCall, setActiveCall]
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

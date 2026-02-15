@@ -103,12 +103,22 @@ export interface AuraZone {
   claimedByUsername?: string;
   borrowedCount?: number;
   borrowedByMe?: boolean;
+  runnerCount?: number;
 }
 
 export interface BorrowRequest {
   zoneId: string;
   fromUserId: string;
   fromUsername: string;
+}
+
+export interface NearbyHunter {
+  userId: string;
+  username: string;
+  distanceBand: string;
+  isRunning: boolean;
+  runningZoneId?: string;
+  distanceToZoneMeters?: number;
 }
 
 export type CallType = 'audio' | 'video';

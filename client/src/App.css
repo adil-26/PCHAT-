@@ -1226,8 +1226,10 @@ body {
 
 .conf-controls {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-start;
   align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
 }
 
 .conf-controls button {
@@ -1238,6 +1240,10 @@ body {
   padding: 0.5rem 0.7rem;
   font-weight: 600;
   cursor: pointer;
+}
+
+.conf-controls .witness-btn {
+  margin-top: 0;
 }
 
 .conf-list {
