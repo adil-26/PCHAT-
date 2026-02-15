@@ -30,9 +30,9 @@ export function ConfessionsPage() {
         <div className="conf-controls">
           <label className="anon-toggle">
             <input type="checkbox" checked={anonymous} onChange={(e) => setAnonymous(e.target.checked)} />
-            Anonymous mode
+            Ghost mode
           </label>
-          <button type="submit">Post confession</button>
+          <button type="submit">Drop confession</button>
         </div>
       </form>
       <div className="conf-list">

@@ -116,11 +116,11 @@ export function FreedomWall() {
           accept="video/*"
           onChange={(e) => onPickVideo(e.target.files?.[0])}
         />
-        <button type="submit">Post</button>
+        <button type="submit">Drop</button>
       </form>
       <label className="anon-toggle">
         <input type="checkbox" checked={isAnonymous} onChange={(e) => setIsAnonymous(e.target.checked)} />
-        Post as anonymous (hidden reputation still tracked)
+        Ghost mode (hidden rep still tracked)
       </label>
       {error && <p className="wall-error">{error}</p>}
       {imageDataUrl && (
