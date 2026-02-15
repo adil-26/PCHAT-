@@ -1,4 +1,4 @@
-import { useRef, useEffect } from 'react';
+﻿import { useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useApp } from '../context/AppContext';
 import type { Message } from '../types';
@@ -22,7 +22,7 @@ function MessageBubble({ msg, isOwn }: { msg: Message; isOwn: boolean }) {
 
 export function ChatRoom() {
   const { activeRoom, messages, currentUser, sendMessage, users } = useApp();
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
   const peerName =
@@ -47,12 +47,22 @@ export function ChatRoom() {
     );
   }
 
+  const submitCurrentMessage = () => {
+    const text = inputRef.current?.value?.trim();
+    if (!text) return;
+    sendMessage(text);
+    if (inputRef.current) inputRef.current.value = '';
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const text = inputRef.current?.value?.trim();
-    if (text) {
-      sendMessage(text);
-      if (inputRef.current) inputRef.current.value = '';
+    submitCurrentMessage();
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      submitCurrentMessage();
     }
   };
 
@@ -76,7 +86,13 @@ export function ChatRoom() {
         </AnimatePresence>
       </div>
       <form className="input-row" onSubmit={handleSubmit}>
-        <input ref={inputRef} type="text" placeholder="Type a message…" autoComplete="off" />
+        <textarea
+          ref={inputRef}
+          className="message-input"
+          placeholder="Type a message..."
+          rows={1}
+          onKeyDown={handleKeyDown}
+        />
         <motion.button type="submit" whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
           Send
         </motion.button>
