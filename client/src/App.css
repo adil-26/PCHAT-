@@ -1412,17 +1412,43 @@ body {
 
   .chat-page {
     grid-template-columns: 1fr;
-    grid-template-rows: minmax(240px, 42vh) minmax(0, 1fr);
+    grid-template-rows: minmax(140px, 28vh) minmax(0, 1fr);
   }
 
   .chat-content-grid {
     grid-template-columns: 1fr;
-    grid-template-rows: minmax(250px, 1fr) minmax(220px, 40%);
+    grid-template-rows: minmax(0, 1fr) minmax(130px, 22vh);
+    height: 100%;
   }
 
   .share-stream {
     border-left: none;
     border-top: 1px solid var(--line);
+  }
+
+  .share-stream-head {
+    padding: 0.48rem 0.62rem;
+  }
+
+  .share-stream-head h3 {
+    font-size: 0.74rem;
+  }
+
+  .share-stream-head span {
+    font-size: 0.66rem;
+  }
+
+  .pulse-board,
+  .spotlight-board,
+  .quest-board {
+    padding: 0.35rem 0.5rem;
+    gap: 0.22rem;
+  }
+
+  .pulse-board h4,
+  .spotlight-board h4,
+  .quest-board h4 {
+    font-size: 0.64rem;
   }
 
   .wall-page .wall-content {
@@ -1468,6 +1494,10 @@ body {
     gap: 0.42rem;
   }
 
+  .node-panel {
+    display: none;
+  }
+
   .online-badge,
   .username,
   .logout-btn {
@@ -1485,6 +1515,74 @@ body {
 
   .charge-btn {
     font-size: 0.58rem;
+  }
+
+  .chat-page {
+    grid-template-rows: minmax(120px, 24vh) minmax(0, 1fr);
+  }
+
+  .chat-list {
+    padding: 0.62rem;
+  }
+
+  .chat-list h2,
+  .chat-list h3 {
+    font-size: 0.66rem;
+    margin-bottom: 0.38rem;
+  }
+
+  .room-btn,
+  .user-row {
+    padding: 0.45rem;
+  }
+
+  .avatar {
+    width: 28px;
+    height: 28px;
+    font-size: 0.72rem;
+  }
+
+  .actions {
+    gap: 0.22rem;
+  }
+
+  .icon-btn {
+    padding: 0.28rem 0.44rem;
+    font-size: 0.62rem;
+  }
+
+  .chat-content-grid {
+    grid-template-rows: minmax(0, 1fr) minmax(108px, 18vh);
+  }
+
+  .chat-header {
+    padding: 0.56rem 0.7rem;
+  }
+
+  .messages {
+    padding: 0.58rem 0.65rem;
+    gap: 0.42rem;
+  }
+
+  .input-row {
+    padding: 0.5rem 0.6rem;
+    gap: 0.38rem;
+  }
+
+  .message-input {
+    min-height: 38px;
+    max-height: 88px;
+    font-size: 0.84rem;
+  }
+
+  .input-row button {
+    padding: 0.56rem 0.68rem;
+    font-size: 0.78rem;
+  }
+
+  .share-stream-list {
+    padding: 0.42rem;
+    gap: 0.34rem;
   }
 
   .freedom-wall {
