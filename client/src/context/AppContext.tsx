@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { createSocket } from '../lib/socket';
 import type { SocketClient } from '../lib/socket';
-import type { Confession, CreatorSpotlight, DropEvent, FreedomPost, Message, PulseScore, QuestProgress, Room, StreakState, User } from '../types';
+import type { Confession, CreatorSpotlight, DropEvent, FreedomPost, Message, NodeProfile, PulseScore, QuestProgress, Room, StreakState, User } from '../types';
 
 interface AppState {
   currentUser: User | null;
@@ -20,6 +20,7 @@ interface AppState {
   streak: StreakState;
   activeDrop: DropEvent | null;
   confessions: Confession[];
+  nodeProfile: NodeProfile | null;
 }
 
 const defaultState: AppState = {
@@ -39,6 +40,7 @@ const defaultState: AppState = {
   streak: { current: 0, best: 0, lastCompletedDate: null, today: { witness: false, handoff: false, room: false } },
   activeDrop: null,
   confessions: [],
+  nodeProfile: null,
 };
 
 type AppContextValue = Omit<AppState, 'messagesByRoom'> & {
@@ -51,6 +53,7 @@ type AppContextValue = Omit<AppState, 'messagesByRoom'> & {
   postFreedom: (payload: { text?: string; imageDataUrl?: string; videoDataUrl?: string; isAnonymous?: boolean; parentPostId?: string }) => void;
   viewFreedomPost: (postId: string) => void;
   reactToFreedomPost: (postId: string, vibe: 'real' | 'wild' | 'deep' | 'w') => void;
+  claimDailyNodeCharge: () => void;
   postConfession: (text: string, isAnonymous: boolean) => void;
   removeConfession: (confessionId: string) => void;
   removeFreedomPost: (postId: string) => void;
@@ -61,11 +64,72 @@ type AppContextValue = Omit<AppState, 'messagesByRoom'> & {
 const AppContext = createContext<AppContextValue | null>(null);
 
 const STREAK_KEY = 'fchat_streak_v1';
+const NODE_KEY = 'fchat_node_v1';
+const SESSION_KEY = 'fchat_session_user_v1';
+const DEVICE_ID_KEY = 'fchat_device_id_v1';
 const todayKey = () => new Date().toISOString().slice(0, 10);
 const isSameDate = (a: string | null, b: string) => a === b;
+const makeNodeId = () => `node_${Math.random().toString(36).slice(2, 10)}`;
+
+function getStoredUser(): User | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as User;
+    if (!parsed?.id || !parsed?.username) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function createDeviceIdentity(): User {
+  const existingDeviceId = localStorage.getItem(DEVICE_ID_KEY);
+  const deviceId = existingDeviceId ?? `d_${Math.random().toString(36).slice(2, 10)}`;
+  localStorage.setItem(DEVICE_ID_KEY, deviceId);
+  const handle = `Node-${deviceId.slice(-4).toUpperCase()}`;
+  const user = { id: `device_${deviceId}`, username: handle };
+  localStorage.setItem(SESSION_KEY, JSON.stringify(user));
+  return user;
+}
+
+function getOrCreateDeviceUser(): User | null {
+  if (typeof window === 'undefined') return null;
+  const stored = getStoredUser();
+  if (stored) return stored;
+  return createDeviceIdentity();
+}
+
+function applyNodeDecay(profile: NodeProfile): NodeProfile {
+  const now = Date.now();
+  const elapsedHours = Math.floor((now - profile.lastSeenAt) / (1000 * 60 * 60));
+  if (elapsedHours <= 0) return { ...profile, lastSeenAt: now };
+  return {
+    ...profile,
+    energy: Math.max(0, profile.energy - elapsedHours * 4),
+    lastSeenAt: now,
+  };
+}
+
+function applyNodeReward(profile: NodeProfile, displayName: string, xpGain: number, energyGain: number): NodeProfile {
+  const decayed = applyNodeDecay(profile);
+  const xp = decayed.xp + xpGain;
+  return {
+    ...decayed,
+    displayName,
+    xp,
+    level: 1 + Math.floor(xp / 120),
+    energy: Math.min(100, decayed.energy + energyGain),
+    lastSeenAt: Date.now(),
+  };
+}
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
-  const [state, setState] = useState<AppState>(defaultState);
+  const [state, setState] = useState<AppState>(() => {
+    const user = getOrCreateDeviceUser();
+    return { ...defaultState, currentUser: user };
+  });
   const currentUserRef = useRef<User | null>(null);
 
   const socket = useMemo(() => createSocket(), []);
@@ -82,9 +146,55 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(NODE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as NodeProfile;
+        const hydrated = applyNodeDecay(parsed);
+        setState((s) => ({ ...s, nodeProfile: hydrated }));
+      }
+    } catch {
+      // ignore invalid local cache
+    }
+  }, []);
+
+  useEffect(() => {
+    const user = getOrCreateDeviceUser();
+    if (!user) return;
+    setState((s) => ({ ...s, currentUser: user, socket }));
+    if (socket.connected) socket.emit('user:join', { userId: user.id, username: user.username });
+  }, [socket]);
+
   const persistStreak = useCallback((next: StreakState) => {
     localStorage.setItem(STREAK_KEY, JSON.stringify(next));
   }, []);
+
+  const persistNode = useCallback((next: NodeProfile) => {
+    localStorage.setItem(NODE_KEY, JSON.stringify(next));
+  }, []);
+
+  const grantNodeReward = useCallback(
+    (xpGain: number, energyGain: number) => {
+      setState((s) => {
+        if (!s.currentUser) return s;
+        const base: NodeProfile =
+          s.nodeProfile ?? {
+            nodeId: makeNodeId(),
+            displayName: s.currentUser.username,
+            xp: 0,
+            level: 1,
+            energy: 70,
+            lastSeenAt: Date.now(),
+            lastDailyClaimDate: null,
+          };
+        const next = applyNodeReward(base, s.currentUser.username, xpGain, energyGain);
+        persistNode(next);
+        return { ...s, nodeProfile: next };
+      });
+    },
+    [persistNode],
+  );
 
   const markStreakAction = useCallback(
     (action: 'witness' | 'handoff' | 'room') => {
@@ -222,17 +332,39 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const login = useCallback(
     (username: string) => {
-      const userId = `user_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-      const user: User = { id: userId, username };
-      socket.emit('user:join', { userId, username });
-      setState((s) => ({ ...s, currentUser: user, socket }));
+      // Keep compatibility with explicit rename, but identity stays device-based.
+      const base = getOrCreateDeviceUser();
+      if (!base) return;
+      const user: User = { id: base.id, username: username || base.username };
+      if (!socket.connected) socket.connect();
+      socket.emit('user:join', { userId: user.id, username: user.username });
+      localStorage.setItem(SESSION_KEY, JSON.stringify(user));
+      setState((s) => {
+        const base: NodeProfile =
+          s.nodeProfile ?? {
+            nodeId: makeNodeId(),
+            displayName: username,
+            xp: 0,
+            level: 1,
+            energy: 70,
+            lastSeenAt: Date.now(),
+            lastDailyClaimDate: null,
+          };
+        const nextNode = applyNodeDecay({ ...base, displayName: username });
+        persistNode(nextNode);
+        return { ...s, currentUser: user, socket, nodeProfile: nextNode };
+      });
     },
-    [socket]
+    [socket, persistNode]
   );
 
   const logout = useCallback(() => {
-    setState(defaultState);
+    // Reset only transient state and create a fresh anonymous device handle.
+    const fresh = createDeviceIdentity();
+    setState({ ...defaultState, currentUser: fresh });
     socket.disconnect();
+    socket.connect();
+    socket.emit('user:join', { userId: fresh.id, username: fresh.username });
   }, [socket]);
 
   const selectRoom = useCallback((room: Room | null) => {
@@ -244,8 +376,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (!state.activeRoom || !text.trim()) return;
       socket.emit('message:send', { roomId: state.activeRoom.id, text: text.trim() });
       markStreakAction('room');
+      grantNodeReward(4, 2);
     },
-    [socket, state.activeRoom, markStreakAction]
+    [socket, state.activeRoom, markStreakAction, grantNodeReward]
   );
 
   const messages = state.activeRoom ? (state.messagesByRoom[state.activeRoom.id] ?? []) : [];
@@ -276,8 +409,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         ...s,
         questProgress: { ...s.questProgress, postsCount: s.questProgress.postsCount + 1 },
       }));
+      grantNodeReward(12, 8);
     },
-    [socket]
+    [socket, grantNodeReward]
   );
 
   const removeFreedomPost = useCallback(
@@ -295,8 +429,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         questProgress: { ...s.questProgress, witnessCount: s.questProgress.witnessCount + 1 },
       }));
       markStreakAction('witness');
+      grantNodeReward(6, 4);
     },
-    [socket, markStreakAction]
+    [socket, markStreakAction, grantNodeReward]
   );
 
   const reactToFreedomPost = useCallback(
@@ -306,8 +441,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         ...s,
         questProgress: { ...s.questProgress, vibesCount: s.questProgress.vibesCount + 1 },
       }));
+      grantNodeReward(3, 2);
     },
-    [socket]
+    [socket, grantNodeReward]
   );
 
   const postConfession = useCallback(
@@ -315,9 +451,32 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const cleaned = text.trim();
       if (!cleaned) return;
       socket.emit('confession:post', { text: cleaned, isAnonymous });
+      grantNodeReward(8, 5);
     },
-    [socket]
+    [socket, grantNodeReward]
   );
+
+  const claimDailyNodeCharge = useCallback(() => {
+    setState((s) => {
+      if (!s.currentUser) return s;
+      const date = todayKey();
+      const base: NodeProfile =
+        s.nodeProfile ?? {
+          nodeId: makeNodeId(),
+          displayName: s.currentUser.username,
+          xp: 0,
+          level: 1,
+          energy: 70,
+          lastSeenAt: Date.now(),
+          lastDailyClaimDate: null,
+        };
+      if (base.lastDailyClaimDate === date) return s;
+      const rewarded = applyNodeReward(base, s.currentUser.username, 25, 30);
+      const next = { ...rewarded, lastDailyClaimDate: date };
+      persistNode(next);
+      return { ...s, nodeProfile: next };
+    });
+  }, [persistNode]);
 
   const removeConfession = useCallback(
     (confessionId: string) => {
@@ -347,13 +506,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       postFreedom,
       viewFreedomPost,
       reactToFreedomPost,
+      claimDailyNodeCharge,
       postConfession,
       removeConfession,
       removeFreedomPost,
       setIncomingCall,
       setActiveCall,
     }),
-    [state, messages, socket, login, logout, selectRoom, sendMessage, startChat, postFreedom, viewFreedomPost, reactToFreedomPost, postConfession, removeConfession, removeFreedomPost, setIncomingCall, setActiveCall]
+    [state, messages, socket, login, logout, selectRoom, sendMessage, startChat, postFreedom, viewFreedomPost, reactToFreedomPost, claimDailyNodeCharge, postConfession, removeConfession, removeFreedomPost, setIncomingCall, setActiveCall]
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

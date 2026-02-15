@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { AppProvider, useApp } from './context/AppContext';
 import { CallProvider } from './hooks/useCall';
-import { Login } from './components/Login';
 import { ChatList } from './components/ChatList';
 import { ChatRoom } from './components/ChatRoom';
 import { FreedomWall } from './components/FreedomWall';
@@ -13,7 +12,7 @@ import { ActiveCall } from './components/ActiveCall';
 import './App.css';
 
 function AppContent() {
-  const { currentUser, logout, connected, incomingCall, activeCall, users } = useApp();
+  const { currentUser, logout, connected, incomingCall, activeCall, users, nodeProfile, claimDailyNodeCharge } = useApp();
   const [view, setView] = useState<'chat' | 'wall' | 'confession'>('chat');
   const [privacyShield, setPrivacyShield] = useState(false);
 
@@ -33,9 +32,11 @@ function AppContent() {
     };
   }, []);
 
-  if (!currentUser) {
-    return <Login />;
-  }
+  if (!currentUser) return null;
+
+  const today = new Date().toISOString().slice(0, 10);
+  const canClaimDaily = !!nodeProfile && nodeProfile.lastDailyClaimDate !== today;
+  const nodeEnergy = nodeProfile?.energy ?? 0;
 
   return (
     <div className="app-layout">
@@ -53,6 +54,20 @@ function AppContent() {
           </button>
         </div>
         <div className="header-right">
+          {nodeProfile && (
+            <div className="node-panel">
+              <div className="node-row">
+                <span className="node-pill">Node L{nodeProfile.level}</span>
+                <span className="node-xp">{nodeProfile.xp} XP</span>
+                <button type="button" className="charge-btn" onClick={claimDailyNodeCharge} disabled={!canClaimDaily}>
+                  {canClaimDaily ? 'Daily Charge' : 'Charged'}
+                </button>
+              </div>
+              <div className="energy-track">
+                <i style={{ width: `${nodeEnergy}%` }} />
+              </div>
+            </div>
+          )}
           <span className="online-badge">{users.length} online</span>
           <span className={`status-dot ${connected ? 'online' : 'offline'}`} title={connected ? 'Connected' : 'Disconnected'} />
           <span className="username">{currentUser.username}</span>

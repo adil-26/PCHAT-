@@ -228,6 +228,67 @@ body {
   gap: 0.7rem;
 }
 
+.node-panel {
+  min-width: 190px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.25rem 0.38rem;
+  background: rgba(255, 255, 255, 0.03);
+  display: grid;
+  gap: 0.22rem;
+}
+
+.node-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.node-pill {
+  border-radius: 999px;
+  border: 1px solid rgba(255, 77, 46, 0.55);
+  background: rgba(255, 77, 46, 0.14);
+  color: #ffd2c9;
+  font-size: 0.66rem;
+  padding: 0.12rem 0.4rem;
+  white-space: nowrap;
+}
+
+.node-xp {
+  font-size: 0.65rem;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.charge-btn {
+  margin-left: auto;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-1);
+  font-size: 0.62rem;
+  padding: 0.12rem 0.4rem;
+  cursor: pointer;
+}
+
+.charge-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.energy-track {
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+
+.energy-track i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #ff4d2e, #ff8b70);
+}
+
 .status-dot {
   width: 9px;
   height: 9px;
@@ -692,6 +753,8 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .owner-badge,
@@ -1226,6 +1289,7 @@ body {
   .header-right {
     width: 100%;
     justify-content: flex-end;
+    gap: 0.42rem;
   }
 
   .chat-page {
@@ -1250,5 +1314,157 @@ body {
   .local-video-wrap {
     width: 126px;
     height: 94px;
+  }
+}
+
+@media (max-width: 560px) {
+  .app-layout {
+    padding: 0.45rem;
+    gap: 0.5rem;
+  }
+
+  .app-header {
+    padding: 0.6rem;
+    gap: 0.5rem;
+  }
+
+  .logo {
+    font-size: 0.96rem;
+  }
+
+  .view-tabs {
+    width: 100%;
+    overflow-x: auto;
+    padding: 0.16rem;
+  }
+
+  .view-tabs button {
+    white-space: nowrap;
+    font-size: 0.74rem;
+    padding: 0.34rem 0.55rem;
+  }
+
+  .header-right {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    gap: 0.42rem;
+  }
+
+  .online-badge,
+  .username,
+  .logout-btn {
+    font-size: 0.72rem;
+  }
+
+  .node-panel {
+    min-width: 140px;
+    flex: 1;
+  }
+
+  .node-xp {
+    display: none;
+  }
+
+  .charge-btn {
+    font-size: 0.58rem;
+  }
+
+  .freedom-wall {
+    padding: 0.56rem;
+    gap: 0.46rem;
+  }
+
+  .freedom-wall-header {
+    align-items: flex-start;
+    gap: 0.3rem;
+  }
+
+  .freedom-wall-header h3 {
+    font-size: 0.88rem;
+  }
+
+  .freedom-wall-header span {
+    font-size: 0.68rem;
+  }
+
+  .freedom-form {
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 0.34rem;
+  }
+
+  .freedom-form input[type='text'] {
+    grid-column: 1 / -1;
+    font-size: 0.84rem;
+    padding: 0.62rem 0.68rem;
+  }
+
+  .freedom-form .upload-btn,
+  .freedom-form button {
+    padding: 0.48rem 0.46rem;
+    text-align: center;
+    font-size: 0.78rem;
+  }
+
+  .drop-banner,
+  .chain-banner {
+    flex-wrap: wrap;
+    font-size: 0.7rem;
+    padding: 0.32rem 0.4rem;
+  }
+
+  .wall-post {
+    padding: 0.45rem;
+  }
+
+  .wall-post header {
+    align-items: flex-start;
+    gap: 0.28rem;
+  }
+
+  .post-user {
+    flex-wrap: wrap;
+    row-gap: 0.18rem;
+  }
+
+  .presence-label {
+    font-size: 0.6rem;
+  }
+
+  .post-meta {
+    width: 100%;
+    justify-content: flex-start;
+    gap: 0.24rem;
+  }
+
+  .owner-badge,
+  .pulse-chip {
+    font-size: 0.56rem;
+    padding: 0.12rem 0.32rem;
+  }
+
+  .wall-post p {
+    font-size: 0.8rem;
+    line-height: 1.24;
+  }
+
+  .vibe-row {
+    gap: 0.24rem;
+  }
+
+  .vibe-btn {
+    font-size: 0.62rem;
+    padding: 0.2rem 0.34rem;
+  }
+
+  .witness-btn,
+  .wall-delete {
+    font-size: 0.66rem;
+    padding: 0.22rem 0.42rem;
+  }
+
+  .privacy-watermark {
+    font-size: 0.52rem;
+    right: 0.35rem;
+    bottom: 0.35rem;
   }
 }

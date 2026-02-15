@@ -80,4 +80,14 @@ export interface Confession {
   anonReputation: number;
 }
 
+export interface NodeProfile {
+  nodeId: string;
+  displayName: string;
+  xp: number;
+  level: number;
+  energy: number;
+  lastSeenAt: number;
+  lastDailyClaimDate: string | null;
+}
+
 export type CallType = 'audio' | 'video';
