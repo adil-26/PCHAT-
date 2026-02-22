@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { Circle, CircleMarker, MapContainer, Polyline, TileLayer, useMap } from 'react-leaflet';
 import { useApp } from '../context/AppContext';
+import { useCall } from '../hooks/useCall';
 import type { AuraZone } from '../types';
 
 const DEFAULT_MAP_CENTER: [number, number] = [40.73061, -73.935242];
@@ -86,6 +87,7 @@ export function AuraHuntPage() {
     blockedNodeIds,
     setBorrowRequestsEnabled,
   } = useApp();
+  const { startCall } = useCall();
   const [position, setPosition] = useState<{ lat: number; lng: number } | null>(null);
   const [status, setStatus] = useState<string>('');
   const [tracking, setTracking] = useState(false);
@@ -212,6 +214,20 @@ export function AuraHuntPage() {
   const focusedZone = useMemo(
     () => visibleZones.find((zone) => zone.id === focusedZoneId) ?? null,
     [visibleZones, focusedZoneId],
+  );
+  const runnersByZone = useMemo(() => {
+    const byZone = new Map<string, typeof visibleNearbyHunters>();
+    for (const hunter of visibleNearbyHunters) {
+      if (!hunter.runningZoneId) continue;
+      const list = byZone.get(hunter.runningZoneId) ?? [];
+      list.push(hunter);
+      byZone.set(hunter.runningZoneId, list);
+    }
+    return byZone;
+  }, [visibleNearbyHunters]);
+  const focusedZoneRunners = useMemo(
+    () => (focusedZoneId ? runnersByZone.get(focusedZoneId) ?? [] : []),
+    [focusedZoneId, runnersByZone],
   );
 
   const navDistance = useMemo(() => {
@@ -370,17 +386,47 @@ export function AuraHuntPage() {
         <strong>Nearby Hunters</strong>
         <span>{visibleNearbyHunters.length} visible</span>
       </header>
+      {focusedZone && (
+        <p className="chain-line">
+          Hunters heading to {focusedZone.title}: {focusedZoneRunners.length}
+        </p>
+      )}
       {visibleNearbyHunters.length === 0 ? (
         <p className="wall-empty">No footsteps nearby.</p>
       ) : (
-        <div className="vibe-row compact">
+        <div className="aura-hunter-list">
           {visibleNearbyHunters.map((hunter) => (
-            <span key={hunter.userId} className="owner-badge">
-              {hunter.username} - {hunter.distanceMeters}m
-              {hunter.isRunning && hunter.distanceToZoneMeters !== undefined
-                ? ` - RUN ${hunter.distanceToZoneMeters}m`
-                : ''}
-            </span>
+            <div key={hunter.userId} className="aura-hunter-row">
+              <span className="owner-badge">
+                {hunter.username} - {hunter.distanceMeters}m
+                {hunter.isRunning && hunter.distanceToZoneMeters !== undefined
+                  ? ` - RUN ${hunter.distanceToZoneMeters}m`
+                  : ''}
+              </span>
+              <div className="aura-hunter-actions">
+                {focusedZoneId && hunter.runningZoneId === focusedZoneId && (
+                  <span className="owner-badge mine">Heading to selected loot</span>
+                )}
+                {hunter.runningZoneId && (
+                  <>
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      onClick={() => { void startCall(hunter.userId, 'audio'); }}
+                    >
+                      Call
+                    </button>
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      onClick={() => { void startCall(hunter.userId, 'video'); }}
+                    >
+                      Video
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
           ))}
         </div>
       )}
@@ -434,6 +480,7 @@ export function AuraHuntPage() {
         const isRunningThis = runningZoneId === zone.id;
         const chainLength = Math.max(zone.runnerCount ?? 0, (zone.borrowedCount ?? 0) + 1);
         const canCapture = distance !== null && distance <= zone.radiusMeters;
+        const runnersForZone = runnersByZone.get(zone.id) ?? [];
         const directionUrl = position
           ? `https://www.google.com/maps/dir/?api=1&origin=${position.lat},${position.lng}&destination=${zone.lat},${zone.lng}&travelmode=walking`
           : `https://www.google.com/maps/search/?api=1&query=${zone.lat},${zone.lng}`;
@@ -460,6 +507,34 @@ export function AuraHuntPage() {
               {canCapture ? <span className="owner-badge mine">Inside capture radius</span> : <span className="owner-badge">Move closer to 50m</span>}
             </div>
             <p className="chain-line">This aura connected {chainLength} strangers.</p>
+            {runnersForZone.length > 0 && (
+              <div className="aura-runner-list">
+                <p className="chain-line">Hunters running to this loot</p>
+                {runnersForZone.map((hunter) => (
+                  <div key={`${zone.id}-${hunter.userId}`} className="aura-runner-row">
+                    <span className="owner-badge">
+                      {hunter.username} - {hunter.distanceToZoneMeters ?? hunter.distanceMeters}m
+                    </span>
+                    <div className="aura-runner-actions">
+                      <button
+                        type="button"
+                        className="icon-btn"
+                        onClick={() => { void startCall(hunter.userId, 'audio'); }}
+                      >
+                        Call
+                      </button>
+                      <button
+                        type="button"
+                        className="icon-btn"
+                        onClick={() => { void startCall(hunter.userId, 'video'); }}
+                      >
+                        Video
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
             {zone.claimedByUserId ? (
               <p className="wall-empty">
                 Claimed by {zone.claimedByUsername ?? 'Unknown'} - Borrowed {zone.borrowedCount ?? 0} times

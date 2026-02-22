@@ -11,6 +11,8 @@ const VIBES = ['calm', 'chaos', 'deep', 'funny'] as const;
 type Vibe = (typeof VIBES)[number];
 const TAGS = ['Crush', 'Hostel', 'Exam', 'Drama', 'Placement'] as const;
 type WallTag = (typeof TAGS)[number];
+const SCOPES = ['global', 'local'] as const;
+type WallScope = (typeof SCOPES)[number];
 const wallPosts = new Map<
   string,
   {
@@ -25,6 +27,7 @@ const wallPosts = new Map<
     pulseCount: number;
     viewerIds: Set<string>;
     tag?: WallTag;
+    scope?: WallScope;
     vibeCounts: Record<Vibe, number>;
     userVibes: Map<string, Vibe>;
     isAnonymous?: boolean;
@@ -213,6 +216,7 @@ function serializePost(post: {
   pulseCount: number;
   viewerIds: Set<string>;
   tag?: WallTag;
+  scope?: WallScope;
   vibeCounts: Record<Vibe, number>;
   isAnonymous?: boolean;
   anonReputation?: number;
@@ -234,6 +238,7 @@ function serializePost(post: {
     pulseCount: post.pulseCount,
     viewerIds: Array.from(post.viewerIds),
     tag: post.tag,
+    scope: post.scope ?? 'global',
     vibeCounts: post.vibeCounts,
     isAnonymous: !!post.isAnonymous,
     anonReputation: post.anonReputation ?? 0,
@@ -754,7 +759,7 @@ export function registerSocketHandlers(io: Server) {
       if (peer) io.to(peer.socketId).emit('call:ended', { byUserId: socket.data.userId });
     });
 
-    socket.on('wall:post', (payload: { text?: string; imageDataUrl?: string; videoDataUrl?: string; isAnonymous?: boolean; tag?: WallTag }) => {
+    socket.on('wall:post', (payload: { text?: string; imageDataUrl?: string; videoDataUrl?: string; isAnonymous?: boolean; tag?: WallTag; scope?: WallScope }) => {
       const userId = socket.data.userId;
       const username = socket.data.username;
       if (!userId || !username) return;
@@ -763,6 +768,7 @@ export function registerSocketHandlers(io: Server) {
       const videoDataUrl = isAllowedDataUrl(payload.videoDataUrl, 'video') ? payload.videoDataUrl : undefined;
       if (!text && !imageDataUrl && !videoDataUrl) return;
       const tag = payload.tag && TAGS.includes(payload.tag) ? payload.tag : 'Crush';
+      const scope = payload.scope && SCOPES.includes(payload.scope) ? payload.scope : 'global';
       const postId = uuid();
       const post = {
         id: postId,
@@ -776,6 +782,7 @@ export function registerSocketHandlers(io: Server) {
         pulseCount: 0,
         viewerIds: new Set<string>([userId]),
         tag,
+        scope,
         vibeCounts: { calm: 0, chaos: 0, deep: 0, funny: 0 },
         userVibes: new Map<string, Vibe>(),
         isAnonymous: !!payload.isAnonymous,
@@ -792,7 +799,7 @@ export function registerSocketHandlers(io: Server) {
       emitCreatorSpotlight(io);
     });
 
-    socket.on('wall:extend', (payload: { parentPostId: string; text?: string; imageDataUrl?: string; videoDataUrl?: string; isAnonymous?: boolean; tag?: WallTag }) => {
+    socket.on('wall:extend', (payload: { parentPostId: string; text?: string; imageDataUrl?: string; videoDataUrl?: string; isAnonymous?: boolean; tag?: WallTag; scope?: WallScope }) => {
       const userId = socket.data.userId;
       const username = socket.data.username;
       if (!userId || !username) return;
@@ -803,6 +810,7 @@ export function registerSocketHandlers(io: Server) {
       const videoDataUrl = isAllowedDataUrl(payload.videoDataUrl, 'video') ? payload.videoDataUrl : undefined;
       if (!text && !imageDataUrl && !videoDataUrl) return;
       const tag = payload.tag && TAGS.includes(payload.tag) ? payload.tag : (parent.tag ?? 'Crush');
+      const scope = payload.scope && SCOPES.includes(payload.scope) ? payload.scope : (parent.scope ?? 'global');
       const postId = uuid();
       const contributors = Array.from(new Set([...(parent.contributors ?? [parent.userId]), userId]));
       const post = {
@@ -817,6 +825,7 @@ export function registerSocketHandlers(io: Server) {
         pulseCount: parent.pulseCount,
         viewerIds: new Set<string>([...parent.viewerIds, userId]),
         tag,
+        scope,
         vibeCounts: { calm: 0, chaos: 0, deep: 0, funny: 0 },
         userVibes: new Map<string, Vibe>(),
         isAnonymous: !!payload.isAnonymous,

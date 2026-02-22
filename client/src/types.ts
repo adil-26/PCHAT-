@@ -1,5 +1,6 @@
 export type WallTag = 'Crush' | 'Hostel' | 'Exam' | 'Drama' | 'Placement';
 export type WallVibe = 'calm' | 'chaos' | 'deep' | 'funny';
+export type WallScope = 'global' | 'local';
 
 export interface User {
   id: string;
@@ -33,6 +34,7 @@ export interface FreedomPost {
   pulseCount: number;
   viewerIds: string[];
   tag?: WallTag;
+  scope?: WallScope;
   vibeCounts: Record<WallVibe, number>;
   isAnonymous?: boolean;
   anonReputation?: number;

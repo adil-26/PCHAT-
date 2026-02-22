@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useApp } from '../context/AppContext';
-import type { WallTag, WallVibe } from '../types';
+import type { WallScope, WallTag, WallVibe } from '../types';
 
 const MAX_IMAGE_BYTES = 900_000;
 const MAX_VIDEO_BYTES = 8_000_000;
@@ -10,6 +10,7 @@ export function FreedomWall() {
   const { currentUser, freedomPosts, users, activeDrop, postFreedom, viewFreedomPost, reactToFreedomPost, removeFreedomPost, reportFreedomPost, blockedNodeIds } = useApp();
   const onlineUserIds = new Set(users.map((u) => u.id));
   const tags: WallTag[] = ['Crush', 'Hostel', 'Exam', 'Drama', 'Placement'];
+  const scopes: WallScope[] = ['global', 'local'];
   const vibes: Array<{ id: WallVibe; label: string }> = [
     { id: 'calm', label: 'Calm' },
     { id: 'chaos', label: 'Chaos' },
@@ -21,6 +22,7 @@ export function FreedomWall() {
   const [videoDataUrl, setVideoDataUrl] = useState<string | undefined>(undefined);
   const [isAnonymous, setIsAnonymous] = useState(false);
   const [tag, setTag] = useState<WallTag>('Crush');
+  const [scope, setScope] = useState<WallScope>('global');
   const [parentPostId, setParentPostId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
@@ -81,7 +83,7 @@ export function FreedomWall() {
     e.preventDefault();
     const trimmed = text.trim();
     if (!trimmed && !imageDataUrl && !videoDataUrl) return;
-    postFreedom({ text: trimmed, imageDataUrl, videoDataUrl, isAnonymous, parentPostId: parentPostId ?? undefined, tag });
+    postFreedom({ text: trimmed, imageDataUrl, videoDataUrl, isAnonymous, parentPostId: parentPostId ?? undefined, tag, scope });
     setText('');
     setImageDataUrl(undefined);
     setVideoDataUrl(undefined);
@@ -139,6 +141,13 @@ export function FreedomWall() {
             </option>
           ))}
         </select>
+        <select value={scope} onChange={(e) => setScope(e.target.value as WallScope)} className="tag-select">
+          {scopes.map((item) => (
+            <option key={item} value={item}>
+              {item === 'global' ? 'Global Drop' : 'Local Drop'}
+            </option>
+          ))}
+        </select>
         <button type="submit">Drop</button>
       </form>
       <label className="anon-toggle">
@@ -190,6 +199,9 @@ export function FreedomWall() {
                 </div>
                 <div className="post-meta">
                   {post.tag && <span className="owner-badge">Tag {post.tag}</span>}
+                  <span className={`owner-badge scope-badge ${(post.scope ?? 'global') === 'local' ? 'local' : 'global'}`}>
+                    {(post.scope ?? 'global').toUpperCase()}
+                  </span>
                   <span className={`owner-badge ${isOwner ? 'mine' : ''}`}>
                     Owner {post.currentOwnerUserId === post.userId ? 'Creator' : 'Relay'}
                   </span>

@@ -848,7 +848,7 @@ body {
 
 .freedom-form {
   display: grid;
-  grid-template-columns: minmax(140px, 1fr) auto auto auto auto;
+  grid-template-columns: minmax(140px, 1fr) auto auto auto auto auto;
   gap: 0.45rem;
 }
 
@@ -1043,6 +1043,18 @@ body {
 .owner-badge {
   color: #c8d5ff;
   background: rgba(120, 145, 255, 0.12);
+}
+
+.scope-badge.global {
+  color: #ffcbbf;
+  border-color: rgba(255, 77, 46, 0.55);
+  background: rgba(255, 77, 46, 0.15);
+}
+
+.scope-badge.local {
+  color: #bbffd8;
+  border-color: rgba(44, 211, 122, 0.55);
+  background: rgba(44, 211, 122, 0.14);
 }
 
 .owner-badge.mine {
@@ -1700,6 +1712,28 @@ body {
   display: grid;
   gap: 0.5rem;
   align-content: start;
+}
+
+.aura-hunter-list,
+.aura-runner-list {
+  display: grid;
+  gap: 0.36rem;
+}
+
+.aura-hunter-row,
+.aura-runner-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.34rem;
+}
+
+.aura-hunter-actions,
+.aura-runner-actions {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.28rem;
 }
 
 .aura-mobile-tabs {

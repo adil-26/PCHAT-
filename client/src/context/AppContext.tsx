@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { createSocket } from '../lib/socket';
 import type { SocketClient } from '../lib/socket';
-import type { AuraZone, BorrowRequest, Confession, CreatorSpotlight, DropEvent, FreedomPost, Message, NearbyHunter, NodeProfile, PulseScore, QuestProgress, Room, StreakState, User, WallTag, WallVibe } from '../types';
+import type { AuraZone, BorrowRequest, Confession, CreatorSpotlight, DropEvent, FreedomPost, Message, NearbyHunter, NodeProfile, PulseScore, QuestProgress, Room, StreakState, User, WallScope, WallTag, WallVibe } from '../types';
 
 interface AppState {
   currentUser: User | null;
@@ -68,7 +68,7 @@ type AppContextValue = Omit<AppState, 'messagesByRoom'> & {
   selectRoom: (room: Room | null) => void;
   sendMessage: (text: string) => void;
   startChat: (peerId: string) => void;
-  postFreedom: (payload: { text?: string; imageDataUrl?: string; videoDataUrl?: string; isAnonymous?: boolean; parentPostId?: string; tag?: WallTag }) => void;
+  postFreedom: (payload: { text?: string; imageDataUrl?: string; videoDataUrl?: string; isAnonymous?: boolean; parentPostId?: string; tag?: WallTag; scope?: WallScope }) => void;
   viewFreedomPost: (postId: string) => void;
   reactToFreedomPost: (postId: string, vibe: WallVibe) => void;
   claimDailyNodeCharge: () => void;
@@ -509,15 +509,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   );
 
   const postFreedom = useCallback(
-    (payload: { text?: string; imageDataUrl?: string; videoDataUrl?: string; isAnonymous?: boolean; parentPostId?: string; tag?: WallTag }) => {
+    (payload: { text?: string; imageDataUrl?: string; videoDataUrl?: string; isAnonymous?: boolean; parentPostId?: string; tag?: WallTag; scope?: WallScope }) => {
       const text = payload.text?.trim();
       const imageDataUrl = payload.imageDataUrl;
       const videoDataUrl = payload.videoDataUrl;
       if (!text && !imageDataUrl && !videoDataUrl) return;
       if (payload.parentPostId) {
-        socket.emit('wall:extend', { parentPostId: payload.parentPostId, text, imageDataUrl, videoDataUrl, isAnonymous: !!payload.isAnonymous, tag: payload.tag });
+        socket.emit('wall:extend', { parentPostId: payload.parentPostId, text, imageDataUrl, videoDataUrl, isAnonymous: !!payload.isAnonymous, tag: payload.tag, scope: payload.scope });
       } else {
-        socket.emit('wall:post', { text, imageDataUrl, videoDataUrl, isAnonymous: !!payload.isAnonymous, tag: payload.tag });
+        socket.emit('wall:post', { text, imageDataUrl, videoDataUrl, isAnonymous: !!payload.isAnonymous, tag: payload.tag, scope: payload.scope });
       }
       setState((s) => ({
         ...s,

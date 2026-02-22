@@ -8,7 +8,7 @@ interface LiveShareStreamProps {
   onOpenConfessions: () => void;
 }
 
-type RegionFilter = 'global' | 'nearby';
+type ScopeFilter = 'global' | 'local';
 
 const vibeButtons: Array<{ id: WallVibe; label: string }> = [
   { id: 'calm', label: 'Calm' },
@@ -29,7 +29,7 @@ export function LiveShareStream({ onPostPulse, onOpenConfessions }: LiveShareStr
     reactToFreedomPost,
   } = useApp();
   const [now, setNow] = useState(Date.now());
-  const [region, setRegion] = useState<RegionFilter>('global');
+  const [region, setRegion] = useState<ScopeFilter>('global');
   const [questFlash, setQuestFlash] = useState('');
   const [demoVibes, setDemoVibes] = useState<Record<WallVibe, number>>({
     calm: 0,
@@ -41,10 +41,9 @@ export function LiveShareStream({ onPostPulse, onOpenConfessions }: LiveShareStr
 
   const onlineUserIds = useMemo(() => new Set(users.map((u) => u.id)), [users]);
   const filteredPosts = useMemo(() => {
-    if (region === 'nearby') {
-      return freedomPosts.filter((post) => onlineUserIds.has(post.userId)).slice(0, 12);
-    }
-    return freedomPosts.slice(0, 12);
+    return freedomPosts
+      .filter((post) => (post.scope ?? 'global') === region)
+      .slice(0, 12);
   }, [freedomPosts, onlineUserIds, region]);
 
   const formatLeft = (expiresAt: number) => {
@@ -62,7 +61,9 @@ export function LiveShareStream({ onPostPulse, onOpenConfessions }: LiveShareStr
   const pulseCountLabel =
     filteredPosts.length > 0
       ? `${filteredPosts.length} live pulses`
-      : 'Waiting for someone to speak.';
+      : region === 'global'
+        ? 'Waiting for someone to speak.'
+        : 'No local pulses yet.';
 
   const showProgressFlash = (text: string) => {
     setQuestFlash(text);
@@ -73,7 +74,7 @@ export function LiveShareStream({ onPostPulse, onOpenConfessions }: LiveShareStr
     <aside className="share-stream stream-shell">
       <div className="share-stream-head stream-head-main">
         <div>
-          <h3>Global Pulse</h3>
+          <h3>{region === 'global' ? 'Global Pulse' : 'Local Pulse'}</h3>
           <span>{pulseCountLabel}</span>
         </div>
         <div className="region-switch">
@@ -86,10 +87,10 @@ export function LiveShareStream({ onPostPulse, onOpenConfessions }: LiveShareStr
           </button>
           <button
             type="button"
-            className={region === 'nearby' ? 'active' : ''}
-            onClick={() => setRegion('nearby')}
+            className={region === 'local' ? 'active' : ''}
+            onClick={() => setRegion('local')}
           >
-            Nearby
+            Local
           </button>
         </div>
       </div>
@@ -112,7 +113,7 @@ export function LiveShareStream({ onPostPulse, onOpenConfessions }: LiveShareStr
             <header>
               <div className="post-user">
                 <span className="presence-dot online" />
-                <strong>Global Pulse</strong>
+                <strong>{region === 'global' ? 'Global Pulse' : 'Local Pulse'}</strong>
               </div>
               <time>Demo</time>
             </header>
@@ -174,6 +175,9 @@ export function LiveShareStream({ onPostPulse, onOpenConfessions }: LiveShareStr
                 <time>{new Date(post.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time>
               </header>
               <div className="share-meta">
+                <span className={`owner-badge scope-badge ${(post.scope ?? 'global') === 'local' ? 'local' : 'global'}`}>
+                  {(post.scope ?? 'global').toUpperCase()}
+                </span>
                 <span className="pulse-chip">Pulse {post.pulseCount}</span>
                 <span className="owner-badge">
                   Owner {post.currentOwnerUserId === post.userId ? 'Creator' : 'Relay'}
