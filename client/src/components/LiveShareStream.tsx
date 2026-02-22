@@ -17,6 +17,9 @@ const vibeButtons: Array<{ id: WallVibe; label: string }> = [
   { id: 'funny', label: 'Funny' },
 ];
 
+const isCompactViewport = () =>
+  typeof window !== 'undefined' && window.matchMedia('(max-width: 820px)').matches;
+
 export function LiveShareStream({ onPostPulse, onOpenConfessions }: LiveShareStreamProps) {
   const {
     freedomPosts,
@@ -31,6 +34,8 @@ export function LiveShareStream({ onPostPulse, onOpenConfessions }: LiveShareStr
   const [now, setNow] = useState(Date.now());
   const [region, setRegion] = useState<ScopeFilter>('global');
   const [questFlash, setQuestFlash] = useState('');
+  const [isCompact, setIsCompact] = useState(isCompactViewport);
+  const [mobilePane, setMobilePane] = useState<'feed' | 'quests'>('feed');
   const [demoVibes, setDemoVibes] = useState<Record<WallVibe, number>>({
     calm: 0,
     chaos: 0,
@@ -57,6 +62,16 @@ export function LiveShareStream({ onPostPulse, onOpenConfessions }: LiveShareStr
     const id = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(id);
   }, []);
+
+  useEffect(() => {
+    const onResize = () => setIsCompact(isCompactViewport());
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  useEffect(() => {
+    if (!isCompact && mobilePane !== 'feed') setMobilePane('feed');
+  }, [isCompact, mobilePane]);
 
   const pulseCountLabel =
     filteredPosts.length > 0
@@ -107,6 +122,26 @@ export function LiveShareStream({ onPostPulse, onOpenConfessions }: LiveShareStr
         </button>
       </div>
 
+      {isCompact && (
+        <div className="stream-mobile-switch">
+          <button
+            type="button"
+            className={mobilePane === 'feed' ? 'active' : ''}
+            onClick={() => setMobilePane('feed')}
+          >
+            Live Feed
+          </button>
+          <button
+            type="button"
+            className={mobilePane === 'quests' ? 'active' : ''}
+            onClick={() => setMobilePane('quests')}
+          >
+            Pulse Quests
+          </button>
+        </div>
+      )}
+
+      {(!isCompact || mobilePane === 'feed') && (
       <div className="share-stream-list stream-posts">
         {filteredPosts.length === 0 && (
           <motion.article className="share-item demo" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
@@ -237,7 +272,9 @@ export function LiveShareStream({ onPostPulse, onOpenConfessions }: LiveShareStr
           );
         })}
       </div>
+      )}
 
+      {(!isCompact || mobilePane === 'quests') && (
       <div className="quest-board stream-quests">
         <h4>Pulse Quests</h4>
         <small>Scroll and interact to progress.</small>
@@ -271,6 +308,7 @@ export function LiveShareStream({ onPostPulse, onOpenConfessions }: LiveShareStr
           </div>
         </div>
       </div>
+      )}
     </aside>
   );
 }

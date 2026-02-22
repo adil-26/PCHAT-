@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useApp } from '../context/AppContext';
 import type { Message } from '../types';
 import { pulselyCopy } from '../content/pulsely-copy';
+import { useCall } from '../hooks/useCall';
 
 function MessageBubble({
   msg,
@@ -31,10 +32,12 @@ function MessageBubble({
 }
 
 export function ChatRoom() {
+  const { startCall } = useCall();
   const {
     activeRoom,
     messages,
     currentUser,
+    activeCall,
     sendMessage,
     users,
     typingByRoom,
@@ -57,6 +60,8 @@ export function ChatRoom() {
       : '';
 
   const isPeerOnline = !!peerId && users.some((u) => u.id === peerId);
+  const inCallWithPeer = !!peerId && activeCall?.peerUserId === peerId;
+  const callBusy = !!activeCall;
 
   const seenMessageId = activeRoom ? seenByRoom[activeRoom.id]?.messageId : undefined;
   const seenIndex = useMemo(
@@ -150,7 +155,32 @@ export function ChatRoom() {
         <span className="avatar">{peerName.slice(0, 1).toUpperCase()}</span>
         <span className="peer-name">{peerName}</span>
         <span className="owner-badge">2 nodes</span>
-        {peerTyping && <span className="typing-pill">typing...</span>}
+        {inCallWithPeer && <span className="owner-badge mine">In Call</span>}
+        <div className="chat-header-right">
+          {peerTyping && <span className="typing-pill">typing...</span>}
+          {!!peerId && (
+            <div className="chat-header-actions">
+              <button
+                type="button"
+                className="icon-btn chat-head-btn"
+                onClick={() => startCall(peerId, 'audio')}
+                disabled={callBusy}
+                title={callBusy ? 'Call already active' : 'Start audio call'}
+              >
+                Audio
+              </button>
+              <button
+                type="button"
+                className="icon-btn chat-head-btn"
+                onClick={() => startCall(peerId, 'video')}
+                disabled={callBusy}
+                title={callBusy ? 'Call already active' : 'Start video call'}
+              >
+                Video
+              </button>
+            </div>
+          )}
+        </div>
       </div>
       <div className="messages" ref={listRef}>
         <AnimatePresence initial={false}>
