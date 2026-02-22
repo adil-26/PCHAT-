@@ -1,3 +1,6 @@
+export type WallTag = 'Crush' | 'Hostel' | 'Exam' | 'Drama' | 'Placement';
+export type WallVibe = 'calm' | 'chaos' | 'deep' | 'funny';
+
 export interface User {
   id: string;
   username: string;
@@ -29,7 +32,8 @@ export interface FreedomPost {
   currentOwnerUserId: string;
   pulseCount: number;
   viewerIds: string[];
-  vibeCounts: Record<string, number>;
+  tag?: WallTag;
+  vibeCounts: Record<WallVibe, number>;
   isAnonymous?: boolean;
   anonReputation?: number;
   chainRootId?: string;
@@ -76,9 +80,11 @@ export interface Confession {
   userId: string;
   username?: string;
   text: string;
-  at: number;
+  createdAt: number;
+  expiresAt: number;
   isAnonymous: boolean;
   anonReputation: number;
+  replies: { id: string; text: string; createdAt: number }[];
 }
 
 export interface NodeProfile {
@@ -104,6 +110,7 @@ export interface AuraZone {
   borrowedCount?: number;
   borrowedByMe?: boolean;
   runnerCount?: number;
+  borrowDisabled?: boolean;
 }
 
 export interface BorrowRequest {
@@ -115,6 +122,9 @@ export interface BorrowRequest {
 export interface NearbyHunter {
   userId: string;
   username: string;
+  lat: number;
+  lng: number;
+  distanceMeters: number;
   distanceBand: string;
   isRunning: boolean;
   runningZoneId?: string;

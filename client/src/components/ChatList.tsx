@@ -4,7 +4,7 @@ import { useCall } from '../hooks/useCall';
 import type { User } from '../types';
 
 export function ChatList() {
-  const { users, rooms, activeRoom, currentUser, selectRoom, startChat } = useApp();
+  const { users, rooms, activeRoom, currentUser, selectRoom, startChat, blockedNodeIds, toggleBlockNode } = useApp();
   const { startCall } = useCall();
   const peers = users.filter((u) => u.id !== currentUser?.id);
 
@@ -21,9 +21,9 @@ export function ChatList() {
       <motion.h2 initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.1 }}>
         Chats
       </motion.h2>
-      {rooms.length === 0 && peers.length > 0 && (
+      {rooms.length === 0 && (
         <motion.p className="hint" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.2 }}>
-          Select a user to start a chat
+          {peers.length > 0 ? 'Who do you want to connect with?' : 'The network is quiet.'}
         </motion.p>
       )}
       <ul className="room-list">
@@ -84,6 +84,14 @@ export function ChatList() {
                   onClick={() => startCall(peer.id, 'video')}
                 >
                   Video
+                </button>
+                <button
+                  type="button"
+                  className="icon-btn"
+                  title={blockedNodeIds.includes(peer.id) ? 'Unblock node' : 'Block node'}
+                  onClick={() => toggleBlockNode(peer.id)}
+                >
+                  {blockedNodeIds.includes(peer.id) ? 'Unblock' : 'Block'}
                 </button>
               </div>
             </div>

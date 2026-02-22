@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { createSocket } from '../lib/socket';
 import type { SocketClient } from '../lib/socket';
-import type { AuraZone, BorrowRequest, Confession, CreatorSpotlight, DropEvent, FreedomPost, Message, NearbyHunter, NodeProfile, PulseScore, QuestProgress, Room, StreakState, User } from '../types';
+import type { AuraZone, BorrowRequest, Confession, CreatorSpotlight, DropEvent, FreedomPost, Message, NearbyHunter, NodeProfile, PulseScore, QuestProgress, Room, StreakState, User, WallTag, WallVibe } from '../types';
 
 interface AppState {
   currentUser: User | null;
@@ -29,6 +29,7 @@ interface AppState {
   runningZoneId: string | null;
   typingByRoom: Record<string, { userId: string; username: string; isTyping: boolean; at: number } | undefined>;
   seenByRoom: Record<string, { userId: string; messageId: string; at: number } | undefined>;
+  blockedNodeIds: string[];
 }
 
 const defaultState: AppState = {
@@ -57,6 +58,7 @@ const defaultState: AppState = {
   runningZoneId: null,
   typingByRoom: {},
   seenByRoom: {},
+  blockedNodeIds: [],
 };
 
 type AppContextValue = Omit<AppState, 'messagesByRoom'> & {
@@ -66,12 +68,16 @@ type AppContextValue = Omit<AppState, 'messagesByRoom'> & {
   selectRoom: (room: Room | null) => void;
   sendMessage: (text: string) => void;
   startChat: (peerId: string) => void;
-  postFreedom: (payload: { text?: string; imageDataUrl?: string; videoDataUrl?: string; isAnonymous?: boolean; parentPostId?: string }) => void;
+  postFreedom: (payload: { text?: string; imageDataUrl?: string; videoDataUrl?: string; isAnonymous?: boolean; parentPostId?: string; tag?: WallTag }) => void;
   viewFreedomPost: (postId: string) => void;
-  reactToFreedomPost: (postId: string, vibe: 'real' | 'wild' | 'deep' | 'w') => void;
+  reactToFreedomPost: (postId: string, vibe: WallVibe) => void;
   claimDailyNodeCharge: () => void;
   postConfession: (text: string, isAnonymous: boolean) => void;
+  replyConfession: (confessionId: string, text: string) => void;
   removeConfession: (confessionId: string) => void;
+  toggleBlockNode: (targetUserId: string) => void;
+  reportFreedomPost: (postId: string, reason?: string) => void;
+  setBorrowRequestsEnabled: (enabled: boolean) => void;
   claimAuraZone: (zoneId: string, lat: number, lng: number) => void;
   requestBorrowAura: (zoneId: string, lat: number, lng: number) => void;
   respondBorrowAura: (zoneId: string, requesterId: string, approve: boolean) => void;
@@ -91,6 +97,8 @@ const STREAK_KEY = 'fchat_streak_v1';
 const NODE_KEY = 'fchat_node_v1';
 const SESSION_KEY = 'fchat_session_user_v1';
 const DEVICE_ID_KEY = 'fchat_device_id_v1';
+const BLOCKED_NODES_KEY = 'fchat_blocked_nodes_v1';
+const EMPTY_VIBE_COUNTS: Record<WallVibe, number> = { calm: 0, chaos: 0, deep: 0, funny: 0 };
 const todayKey = () => new Date().toISOString().slice(0, 10);
 const isSameDate = (a: string | null, b: string) => a === b;
 const makeNodeId = () => `node_${Math.random().toString(36).slice(2, 10)}`;
@@ -166,6 +174,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         const parsed = JSON.parse(raw) as StreakState;
         setState((s) => ({ ...s, streak: parsed }));
       }
+    } catch {
+      // ignore invalid local cache
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(BLOCKED_NODES_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as string[];
+      if (!Array.isArray(parsed)) return;
+      setState((s) => ({ ...s, blockedNodeIds: parsed.filter((v) => typeof v === 'string') }));
     } catch {
       // ignore invalid local cache
     }
@@ -298,16 +318,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }));
     });
     socket.on('wall:new', (post: FreedomPost) => {
-      const normalized = { ...post, vibeCounts: post.vibeCounts ?? { real: 0, wild: 0, deep: 0, w: 0 } };
-      setState((s) => ({ ...s, freedomPosts: [normalized, ...s.freedomPosts].slice(0, 250) }));
+      const normalized = { ...post, vibeCounts: { ...EMPTY_VIBE_COUNTS, ...(post.vibeCounts ?? {}) } };
+      setState((s) => {
+        if (s.blockedNodeIds.includes(normalized.userId)) return s;
+        return { ...s, freedomPosts: [normalized, ...s.freedomPosts].slice(0, 250) };
+      });
     });
     socket.on('wall:snapshot', (posts: FreedomPost[]) => {
       const normalized = posts
-        .map((post) => ({ ...post, vibeCounts: post.vibeCounts ?? { real: 0, wild: 0, deep: 0, w: 0 } }))
+        .map((post) => ({ ...post, vibeCounts: { ...EMPTY_VIBE_COUNTS, ...(post.vibeCounts ?? {}) } }))
+        .filter((post) => !state.blockedNodeIds.includes(post.userId))
         .slice(0, 250);
       setState((s) => ({ ...s, freedomPosts: normalized }));
     });
-    socket.on('wall:update', (payload: { postId: string; currentOwnerUserId: string; pulseCount: number; viewerIds: string[]; vibeCounts?: Record<string, number>; firstWitnessUserId?: string }) => {
+    socket.on('wall:update', (payload: { postId: string; currentOwnerUserId: string; pulseCount: number; viewerIds: string[]; vibeCounts?: Record<WallVibe, number>; firstWitnessUserId?: string }) => {
       setState((s) => ({
         ...s,
         freedomPosts: s.freedomPosts.map((post) =>
@@ -317,7 +341,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
                 currentOwnerUserId: payload.currentOwnerUserId,
                 pulseCount: payload.pulseCount,
                 viewerIds: payload.viewerIds,
-                vibeCounts: payload.vibeCounts ?? post.vibeCounts,
+                vibeCounts: payload.vibeCounts ? { ...EMPTY_VIBE_COUNTS, ...payload.vibeCounts } : post.vibeCounts,
                 firstWitnessUserId: payload.firstWitnessUserId ?? post.firstWitnessUserId,
               }
             : post
@@ -340,10 +364,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setState((s) => ({ ...s, freedomPosts: s.freedomPosts.filter((p) => p.id !== postId) }));
     });
     socket.on('confession:snapshot', (items: Confession[]) => {
-      setState((s) => ({ ...s, confessions: items.slice(0, 300) }));
+      setState((s) => ({ ...s, confessions: items.filter((c) => !s.blockedNodeIds.includes(c.userId)).slice(0, 300) }));
     });
     socket.on('confession:new', (item: Confession) => {
-      setState((s) => ({ ...s, confessions: [item, ...s.confessions].slice(0, 300) }));
+      setState((s) => {
+        if (s.blockedNodeIds.includes(item.userId)) return s;
+        return { ...s, confessions: [item, ...s.confessions].slice(0, 300) };
+      });
+    });
+    socket.on('confession:update', (item: Confession) => {
+      setState((s) => ({
+        ...s,
+        confessions: s.confessions.map((c) => (c.id === item.id ? item : c)),
+      }));
     });
     socket.on('confession:remove', ({ confessionId }: { confessionId: string }) => {
       setState((s) => ({ ...s, confessions: s.confessions.filter((c) => c.id !== confessionId) }));
@@ -396,6 +429,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       socket.off('wall:remove');
       socket.off('confession:snapshot');
       socket.off('confession:new');
+      socket.off('confession:update');
       socket.off('confession:remove');
       socket.off('hunt:snapshot');
       socket.off('hunt:points');
@@ -404,7 +438,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       socket.off('hunt:borrow:result');
       socket.off('hunt:presence');
     };
-  }, [socket, markStreakAction]);
+  }, [socket, markStreakAction, state.blockedNodeIds]);
 
   useEffect(() => {
     currentUserRef.current = state.currentUser;
@@ -475,15 +509,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   );
 
   const postFreedom = useCallback(
-    (payload: { text?: string; imageDataUrl?: string; videoDataUrl?: string; isAnonymous?: boolean; parentPostId?: string }) => {
+    (payload: { text?: string; imageDataUrl?: string; videoDataUrl?: string; isAnonymous?: boolean; parentPostId?: string; tag?: WallTag }) => {
       const text = payload.text?.trim();
       const imageDataUrl = payload.imageDataUrl;
       const videoDataUrl = payload.videoDataUrl;
       if (!text && !imageDataUrl && !videoDataUrl) return;
       if (payload.parentPostId) {
-        socket.emit('wall:extend', { parentPostId: payload.parentPostId, text, imageDataUrl, videoDataUrl, isAnonymous: !!payload.isAnonymous });
+        socket.emit('wall:extend', { parentPostId: payload.parentPostId, text, imageDataUrl, videoDataUrl, isAnonymous: !!payload.isAnonymous, tag: payload.tag });
       } else {
-        socket.emit('wall:post', { text, imageDataUrl, videoDataUrl, isAnonymous: !!payload.isAnonymous });
+        socket.emit('wall:post', { text, imageDataUrl, videoDataUrl, isAnonymous: !!payload.isAnonymous, tag: payload.tag });
       }
       setState((s) => ({
         ...s,
@@ -515,16 +549,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   );
 
   const reactToFreedomPost = useCallback(
-    (postId: string, vibe: 'real' | 'wild' | 'deep' | 'w') => {
-      socket.emit('wall:react', { postId, vibe });
-      if (!vibeQuestPostIdsRef.current.has(postId)) {
+    (postId: string, vibe: WallVibe) => {
+      socket.emit('wall:vibe:add', { postId, vibe });
+      const isFirstVibeOnPost = !vibeQuestPostIdsRef.current.has(postId);
+      if (isFirstVibeOnPost) {
         vibeQuestPostIdsRef.current.add(postId);
         setState((s) => ({
           ...s,
           questProgress: { ...s.questProgress, vibesCount: s.questProgress.vibesCount + 1 },
         }));
+        // Prevent XP farming by reaction switching on the same post.
+        grantNodeReward(3, 2);
       }
-      grantNodeReward(3, 2);
     },
     [socket, grantNodeReward]
   );
@@ -535,6 +571,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (!cleaned) return;
       socket.emit('confession:post', { text: cleaned, isAnonymous });
       grantNodeReward(8, 5);
+    },
+    [socket, grantNodeReward]
+  );
+
+  const replyConfession = useCallback(
+    (confessionId: string, text: string) => {
+      const cleaned = text.trim();
+      if (!cleaned) return;
+      socket.emit('confession:reply', { confessionId, text: cleaned });
+      grantNodeReward(4, 3);
     },
     [socket, grantNodeReward]
   );
@@ -566,6 +612,44 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       socket.emit('confession:remove', { confessionId });
     },
     [socket]
+  );
+
+  const toggleBlockNode = useCallback(
+    (targetUserId: string) => {
+      if (!targetUserId) return;
+      setState((s) => {
+        if (!s.currentUser || s.currentUser.id === targetUserId) return s;
+        const nextSet = new Set(s.blockedNodeIds);
+        const willBlock = !nextSet.has(targetUserId);
+        if (willBlock) nextSet.add(targetUserId);
+        else nextSet.delete(targetUserId);
+        const next = Array.from(nextSet);
+        localStorage.setItem(BLOCKED_NODES_KEY, JSON.stringify(next));
+        socket.emit('user:block', { targetUserId, blocked: willBlock });
+        return {
+          ...s,
+          blockedNodeIds: next,
+          confessions: s.confessions.filter((c) => !nextSet.has(c.userId)),
+          freedomPosts: s.freedomPosts.filter((p) => !nextSet.has(p.userId)),
+        };
+      });
+    },
+    [socket],
+  );
+
+  const reportFreedomPost = useCallback(
+    (postId: string, reason = 'unsafe') => {
+      if (!postId) return;
+      socket.emit('wall:report', { postId, reason });
+    },
+    [socket],
+  );
+
+  const setBorrowRequestsEnabled = useCallback(
+    (enabled: boolean) => {
+      socket.emit('hunt:borrow:toggle', { enabled: !!enabled });
+    },
+    [socket],
   );
 
   const claimAuraZone = useCallback(
@@ -653,7 +737,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       reactToFreedomPost,
       claimDailyNodeCharge,
       postConfession,
+      replyConfession,
       removeConfession,
+      toggleBlockNode,
+      reportFreedomPost,
+      setBorrowRequestsEnabled,
       claimAuraZone,
       requestBorrowAura,
       respondBorrowAura,
@@ -666,7 +754,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setIncomingCall,
       setActiveCall,
     }),
-    [state, messages, socket, login, logout, selectRoom, sendMessage, startChat, postFreedom, viewFreedomPost, reactToFreedomPost, claimDailyNodeCharge, postConfession, removeConfession, claimAuraZone, requestBorrowAura, respondBorrowAura, updateHuntPresence, startAuraRun, stopAuraRun, setTyping, markRoomSeen, removeFreedomPost, setIncomingCall, setActiveCall]
+    [state, messages, socket, login, logout, selectRoom, sendMessage, startChat, postFreedom, viewFreedomPost, reactToFreedomPost, claimDailyNodeCharge, postConfession, replyConfession, removeConfession, toggleBlockNode, reportFreedomPost, setBorrowRequestsEnabled, claimAuraZone, requestBorrowAura, respondBorrowAura, updateHuntPresence, startAuraRun, stopAuraRun, setTyping, markRoomSeen, removeFreedomPost, setIncomingCall, setActiveCall]
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

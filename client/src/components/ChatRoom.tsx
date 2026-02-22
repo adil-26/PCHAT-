@@ -1,7 +1,8 @@
-﻿import { useRef, useEffect, useMemo } from 'react';
+import { useRef, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useApp } from '../context/AppContext';
 import type { Message } from '../types';
+import { pulselyCopy } from '../content/pulsely-copy';
 
 function MessageBubble({
   msg,
@@ -10,7 +11,7 @@ function MessageBubble({
 }: {
   msg: Message;
   isOwn: boolean;
-  status?: 'Sent' | 'Delivered' | 'Seen';
+  status?: 'Whispered' | 'Reached' | 'Witnessed';
 }) {
   return (
     <motion.div
@@ -72,8 +73,14 @@ export function ChatRoom() {
   }, [activeRoom, peerId, typingByRoom]);
 
   useEffect(() => {
-    listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' });
-  }, [messages, peerTyping]);
+    if (!listRef.current) return;
+    const el = listRef.current;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    // Auto-scroll only when the user is already near bottom.
+    if (distanceFromBottom < 120) {
+      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    }
+  }, [messages]);
 
   useEffect(() => {
     if (!activeRoom || !currentUser) return;
@@ -97,7 +104,8 @@ export function ChatRoom() {
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
       >
-        <p>Select a chat or start one with an online user</p>
+        <p>{pulselyCopy.emptyStates.chat.title}</p>
+        <p className="hint">{pulselyCopy.emptyStates.chat.hint}</p>
       </motion.div>
     );
   }
@@ -141,17 +149,18 @@ export function ChatRoom() {
       <div className="chat-header">
         <span className="avatar">{peerName.slice(0, 1).toUpperCase()}</span>
         <span className="peer-name">{peerName}</span>
+        <span className="owner-badge">2 nodes</span>
         {peerTyping && <span className="typing-pill">typing...</span>}
       </div>
       <div className="messages" ref={listRef}>
         <AnimatePresence initial={false}>
           {messages.map((msg, idx) => {
             const isOwn = msg.userId === currentUser?.id;
-            let status: 'Sent' | 'Delivered' | 'Seen' | undefined;
+            let status: 'Whispered' | 'Reached' | 'Witnessed' | undefined;
             if (isOwn) {
-              if (seenIndex >= idx && seenIndex !== -1) status = 'Seen';
-              else if (isPeerOnline) status = 'Delivered';
-              else status = 'Sent';
+              if (seenIndex >= idx && seenIndex !== -1) status = 'Witnessed';
+              else if (isPeerOnline) status = 'Reached';
+              else status = 'Whispered';
             }
             return <MessageBubble key={msg.id} msg={msg} isOwn={isOwn} status={status} />;
           })}
@@ -173,3 +182,4 @@ export function ChatRoom() {
     </motion.div>
   );
 }
+

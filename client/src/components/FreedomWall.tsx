@@ -1,23 +1,26 @@
 import { useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useApp } from '../context/AppContext';
+import type { WallTag, WallVibe } from '../types';
 
 const MAX_IMAGE_BYTES = 900_000;
 const MAX_VIDEO_BYTES = 8_000_000;
 
 export function FreedomWall() {
-  const { currentUser, freedomPosts, users, activeDrop, postFreedom, viewFreedomPost, reactToFreedomPost, removeFreedomPost } = useApp();
+  const { currentUser, freedomPosts, users, activeDrop, postFreedom, viewFreedomPost, reactToFreedomPost, removeFreedomPost, reportFreedomPost, blockedNodeIds } = useApp();
   const onlineUserIds = new Set(users.map((u) => u.id));
-  const vibes: Array<{ id: 'real' | 'wild' | 'deep' | 'w'; label: string }> = [
-    { id: 'real', label: 'Real' },
-    { id: 'wild', label: 'Wild' },
+  const tags: WallTag[] = ['Crush', 'Hostel', 'Exam', 'Drama', 'Placement'];
+  const vibes: Array<{ id: WallVibe; label: string }> = [
+    { id: 'calm', label: 'Calm' },
+    { id: 'chaos', label: 'Chaos' },
     { id: 'deep', label: 'Deep' },
-    { id: 'w', label: 'W' },
+    { id: 'funny', label: 'Funny' },
   ];
   const [text, setText] = useState('');
   const [imageDataUrl, setImageDataUrl] = useState<string | undefined>(undefined);
   const [videoDataUrl, setVideoDataUrl] = useState<string | undefined>(undefined);
   const [isAnonymous, setIsAnonymous] = useState(false);
+  const [tag, setTag] = useState<WallTag>('Crush');
   const [parentPostId, setParentPostId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
@@ -78,7 +81,7 @@ export function FreedomWall() {
     e.preventDefault();
     const trimmed = text.trim();
     if (!trimmed && !imageDataUrl && !videoDataUrl) return;
-    postFreedom({ text: trimmed, imageDataUrl, videoDataUrl, isAnonymous, parentPostId: parentPostId ?? undefined });
+    postFreedom({ text: trimmed, imageDataUrl, videoDataUrl, isAnonymous, parentPostId: parentPostId ?? undefined, tag });
     setText('');
     setImageDataUrl(undefined);
     setVideoDataUrl(undefined);
@@ -129,6 +132,13 @@ export function FreedomWall() {
           accept="video/*"
           onChange={(e) => onPickVideo(e.target.files?.[0])}
         />
+        <select value={tag} onChange={(e) => setTag(e.target.value as WallTag)} className="tag-select">
+          {tags.map((item) => (
+            <option key={item} value={item}>
+              {item}
+            </option>
+          ))}
+        </select>
         <button type="submit">Drop</button>
       </form>
       <label className="anon-toggle">
@@ -160,7 +170,7 @@ export function FreedomWall() {
 
       <div className="wall-feed">
         {freedomPosts.length === 0 && <p className="wall-empty">No live posts yet.</p>}
-        {freedomPosts.map((post) => {
+        {freedomPosts.filter((post) => !blockedNodeIds.includes(post.userId)).map((post) => {
           const own = post.userId === currentUser?.id;
           const isOwner = post.currentOwnerUserId === currentUser?.id;
           const online = onlineUserIds.has(post.userId);
@@ -179,6 +189,7 @@ export function FreedomWall() {
                   <span className="presence-label">{online ? 'online' : 'offline'}</span>
                 </div>
                 <div className="post-meta">
+                  {post.tag && <span className="owner-badge">Tag {post.tag}</span>}
                   <span className={`owner-badge ${isOwner ? 'mine' : ''}`}>
                     Owner {post.currentOwnerUserId === post.userId ? 'Creator' : 'Relay'}
                   </span>
@@ -228,6 +239,11 @@ export function FreedomWall() {
               <button type="button" className="witness-btn" onClick={() => setParentPostId(post.id)}>
                 Remix Chain
               </button>
+              {!own && (
+                <button type="button" className="wall-delete" onClick={() => reportFreedomPost(post.id, 'community-report')}>
+                  Report
+                </button>
+              )}
               {own && (
                 <button type="button" className="wall-delete" onClick={() => removeFreedomPost(post.id)}>
                   Delete

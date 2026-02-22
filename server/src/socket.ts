@@ -4,8 +4,13 @@ import { users, rooms, messagesByRoom } from './index.js';
 
 const wallPostOwners = new Map<string, string>();
 const pendingUserCleanup = new Map<string, NodeJS.Timeout>();
-const VIBES = ['real', 'wild', 'deep', 'w'] as const;
+const userBlocks = new Map<string, Set<string>>();
+const wallReports = new Map<string, Array<{ reporterUserId: string; reason: string; at: number }>>();
+const borrowDisabledByUser = new Map<string, boolean>();
+const VIBES = ['calm', 'chaos', 'deep', 'funny'] as const;
 type Vibe = (typeof VIBES)[number];
+const TAGS = ['Crush', 'Hostel', 'Exam', 'Drama', 'Placement'] as const;
+type WallTag = (typeof TAGS)[number];
 const wallPosts = new Map<
   string,
   {
@@ -19,6 +24,7 @@ const wallPosts = new Map<
     currentOwnerUserId: string;
     pulseCount: number;
     viewerIds: Set<string>;
+    tag?: WallTag;
     vibeCounts: Record<Vibe, number>;
     userVibes: Map<string, Vibe>;
     isAnonymous?: boolean;
@@ -32,9 +38,23 @@ const wallPosts = new Map<
 >();
 const pulseScores = new Map<string, { username: string; score: number }>();
 const anonReputation = new Map<string, number>();
-const confessions = new Map<string, { id: string; userId: string; username: string; text: string; at: number; isAnonymous: boolean; anonReputation: number }>();
+const confessions = new Map<string, {
+  id: string;
+  userId: string;
+  username: string;
+  text: string;
+  createdAt: number;
+  expiresAt: number;
+  isAnonymous: boolean;
+  anonReputation: number;
+  replies: Array<{ id: string; text: string; createdAt: number }>;
+}>();
 const MAX_DATA_URL_LENGTH = 12_000_000;
 const DISCONNECT_GRACE_MS = 8_000;
+const MESSAGE_RATE_LIMIT_COUNT = 5;
+const MESSAGE_RATE_LIMIT_WINDOW_MS = 10_000;
+const CONFESSION_TTL_MS = 24 * 60 * 60 * 1000;
+const CONFESSION_CLEANUP_INTERVAL_MS = 60_000;
 const DROP_DURATION_MS = 10 * 60 * 1000;
 const DROP_INTERVAL_MS = 15 * 60 * 1000;
 const DROP_PROMPTS = [
@@ -45,10 +65,14 @@ const DROP_PROMPTS = [
 ];
 let activeDrop: { id: string; prompt: string; startedAt: number; expiresAt: number } | null = null;
 let huntPresenceLoopStarted = false;
+let confessionCleanupStarted = false;
 let lastDynamicZoneAt = 0;
 
 const AURA_DROP_DURATION_MS = 30 * 60 * 1000;
 const MAX_HUNT_DISTANCE_METERS = 4000;
+const AURA_CAPTURE_RADIUS_METERS = 50;
+const AURA_SPAWN_RING_MIN_METERS = 800;
+const AURA_SPAWN_RING_MAX_METERS = 1000;
 const HUNT_PRESENCE_TTL_MS = 90_000;
 const MAX_DYNAMIC_ZONES = 6;
 const DYNAMIC_ZONE_MIN_SPACING_METERS = 1000;
@@ -123,6 +147,60 @@ function addAnonReputation(userId: string, delta: number) {
   anonReputation.set(userId, Math.max(0, prev + delta));
 }
 
+function isBlocked(blockerUserId: string, otherUserId: string) {
+  return userBlocks.get(blockerUserId)?.has(otherUserId) ?? false;
+}
+
+function isBlockedEitherWay(aUserId: string, bUserId: string) {
+  return isBlocked(aUserId, bUserId) || isBlocked(bUserId, aUserId);
+}
+
+function isRateLimited(socket: Socket, eventKey: string, limit: number, windowMs: number) {
+  const now = Date.now();
+  const store = (socket.data.rateLimits ??= {}) as Record<string, number[]>;
+  const list = (store[eventKey] ?? []).filter((at) => now - at < windowMs);
+  if (list.length >= limit) {
+    store[eventKey] = list;
+    return true;
+  }
+  list.push(now);
+  store[eventKey] = list;
+  return false;
+}
+
+function serializeConfession(item: {
+  id: string;
+  userId: string;
+  username: string;
+  text: string;
+  createdAt: number;
+  expiresAt: number;
+  isAnonymous: boolean;
+  anonReputation: number;
+  replies: Array<{ id: string; text: string; createdAt: number }>;
+}) {
+  return {
+    id: item.id,
+    userId: item.userId,
+    username: item.isAnonymous ? 'Anon' : item.username,
+    text: item.text,
+    createdAt: item.createdAt,
+    expiresAt: item.expiresAt,
+    isAnonymous: item.isAnonymous,
+    anonReputation: item.anonReputation,
+    replies: item.replies,
+  };
+}
+
+function pruneExpiredConfessions(io: Server) {
+  const now = Date.now();
+  for (const [confessionId, item] of confessions.entries()) {
+    if (item.expiresAt > now) continue;
+    confessions.delete(confessionId);
+    io.emit('confession:remove', { confessionId });
+  }
+}
+
 function serializePost(post: {
   id: string;
   userId: string;
@@ -134,6 +212,7 @@ function serializePost(post: {
   currentOwnerUserId: string;
   pulseCount: number;
   viewerIds: Set<string>;
+  tag?: WallTag;
   vibeCounts: Record<Vibe, number>;
   isAnonymous?: boolean;
   anonReputation?: number;
@@ -154,6 +233,7 @@ function serializePost(post: {
     currentOwnerUserId: post.currentOwnerUserId,
     pulseCount: post.pulseCount,
     viewerIds: Array.from(post.viewerIds),
+    tag: post.tag,
     vibeCounts: post.vibeCounts,
     isAnonymous: !!post.isAnonymous,
     anonReputation: post.anonReputation ?? 0,
@@ -182,6 +262,85 @@ function metersBetween(lat1: number, lon1: number, lat2: number, lon2: number) {
     Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) *
     Math.sin(dLon / 2) * Math.sin(dLon / 2);
   return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+function offsetPointByMeters(lat: number, lng: number, northMeters: number, eastMeters: number) {
+  const earthRadius = 6378137;
+  const dLat = northMeters / earthRadius;
+  const dLng = eastMeters / (earthRadius * Math.cos((Math.PI * lat) / 180));
+  return {
+    lat: lat + (dLat * 180) / Math.PI,
+    lng: lng + (dLng * 180) / Math.PI,
+  };
+}
+
+function randomPointInRing(lat: number, lng: number, minMeters: number, maxMeters: number) {
+  const distance = minMeters + Math.random() * (maxMeters - minMeters);
+  const angle = Math.random() * Math.PI * 2;
+  const north = Math.cos(angle) * distance;
+  const east = Math.sin(angle) * distance;
+  return offsetPointByMeters(lat, lng, north, east);
+}
+
+function activeAuraZoneList() {
+  const now = Date.now();
+  return Array.from(auraZones.values()).filter((zone) => zone.expiresAt > now);
+}
+
+function hasZoneInDistanceRange(lat: number, lng: number, minMeters: number, maxMeters: number) {
+  const zones = activeAuraZoneList();
+  return zones.some((zone) => {
+    const d = metersBetween(lat, lng, zone.lat, zone.lng);
+    return d >= minMeters && d <= maxMeters;
+  });
+}
+
+function isTooCloseToExistingZone(lat: number, lng: number, minSpacingMeters: number) {
+  const zones = activeAuraZoneList();
+  return zones.some((zone) => metersBetween(lat, lng, zone.lat, zone.lng) < minSpacingMeters);
+}
+
+function createAuraZoneInRing(
+  anchorLat: number,
+  anchorLng: number,
+  title: string,
+  reward: number,
+  minMeters = AURA_SPAWN_RING_MIN_METERS,
+  maxMeters = AURA_SPAWN_RING_MAX_METERS,
+) {
+  for (let i = 0; i < 20; i += 1) {
+    const candidate = randomPointInRing(anchorLat, anchorLng, minMeters, maxMeters);
+    if (isTooCloseToExistingZone(candidate.lat, candidate.lng, DYNAMIC_ZONE_MIN_SPACING_METERS)) continue;
+    createAuraZone(candidate.lat, candidate.lng, title, AURA_CAPTURE_RADIUS_METERS, reward);
+    return true;
+  }
+  return false;
+}
+
+function ensureAuraCoverageForActiveUsers() {
+  pruneHuntPresence();
+  const presences = Array.from(huntPresence.values()).sort((a, b) => b.updatedAt - a.updatedAt);
+  if (!presences.length) return false;
+  let spawned = false;
+  for (const p of presences) {
+    const activeCount = activeAuraZoneList().length;
+    if (activeCount >= MAX_DYNAMIC_ZONES) break;
+    const hasRingLoot = hasZoneInDistanceRange(
+      p.lat,
+      p.lng,
+      AURA_SPAWN_RING_MIN_METERS,
+      AURA_SPAWN_RING_MAX_METERS + 120,
+    );
+    if (hasRingLoot) continue;
+    const ok = createAuraZoneInRing(
+      p.lat,
+      p.lng,
+      'Nearby Ring Loot',
+      70 + Math.floor(Math.random() * 70),
+    );
+    if (ok) spawned = true;
+  }
+  return spawned;
 }
 
 function distanceBand(meters: number) {
@@ -225,6 +384,7 @@ function serializeAuraZones() {
       claimedByUserId: zone.claimedByUserId,
       claimedByUsername: zone.claimedByUsername,
       borrowedCount: zone.borrowedBy.size,
+      borrowDisabled: zone.claimedByUserId ? !!borrowDisabledByUser.get(zone.claimedByUserId) : false,
       runnerCount: runnerCounts.get(zone.id) ?? 0,
     }));
 }
@@ -265,6 +425,9 @@ function emitHuntPresenceForUser(io: Server, userId: string) {
       return {
         userId: p.userId,
         username: p.username,
+        lat: p.lat,
+        lng: p.lng,
+        distanceMeters: Math.round(dist),
         distanceBand: distanceBand(dist),
         isRunning: !!p.runningZoneId,
         runningZoneId: p.runningZoneId ?? undefined,
@@ -300,13 +463,20 @@ function createAuraZone(lat: number, lng: number, title: string, radiusMeters: n
 }
 
 function seedAuraZone() {
-  createAuraZone(
-    40.73061 + (Math.random() - 0.5) * 0.02,
-    -73.935242 + (Math.random() - 0.5) * 0.02,
-    ['Skyline Pulse', 'Street Echo', 'Neon Orbit', 'Hidden Aura'][Math.floor(Math.random() * 4)],
-    220,
-    60 + Math.floor(Math.random() * 80),
-  );
+  pruneHuntPresence();
+  const active = Array.from(huntPresence.values());
+  const source = active.length > 0 ? active[Math.floor(Math.random() * active.length)] : null;
+  const title = ['Skyline Pulse', 'Street Echo', 'Neon Orbit', 'Hidden Aura'][Math.floor(Math.random() * 4)];
+  const reward = 60 + Math.floor(Math.random() * 80);
+  if (source) {
+    const seeded = createAuraZoneInRing(source.lat, source.lng, title, reward);
+    if (seeded) return;
+  }
+  const base = {
+    lat: 40.73061 + (Math.random() - 0.5) * 0.02,
+    lng: -73.935242 + (Math.random() - 0.5) * 0.02,
+  };
+  createAuraZone(base.lat, base.lng, title, AURA_CAPTURE_RADIUS_METERS, reward);
 }
 
 function buildPresenceClusters() {
@@ -352,21 +522,9 @@ function trySpawnClusterZone() {
     );
     const baseLat = centroid.lat / cluster.length;
     const baseLng = centroid.lng / cluster.length;
-    const tooClose = Array.from(auraZones.values())
-      .filter((z) => z.expiresAt > now)
-      .some((z) => metersBetween(z.lat, z.lng, baseLat, baseLng) < DYNAMIC_ZONE_MIN_SPACING_METERS);
-    if (tooClose) continue;
-    const jitterLat = (Math.random() - 0.5) * 0.003;
-    const jitterLng = (Math.random() - 0.5) * 0.003;
-    const radiusMeters = Math.min(340, 180 + cluster.length * 18);
     const reward = Math.min(220, 80 + cluster.length * 18 + Math.floor(Math.random() * 30));
-    createAuraZone(
-      baseLat + jitterLat,
-      baseLng + jitterLng,
-      `Cluster Loot x${cluster.length}`,
-      radiusMeters,
-      reward,
-    );
+    const created = createAuraZoneInRing(baseLat, baseLng, `Cluster Loot x${cluster.length}`, reward);
+    if (!created) continue;
     lastDynamicZoneAt = now;
     return true;
   }
@@ -409,6 +567,7 @@ export function registerSocketHandlers(io: Server) {
         if (zone.expiresAt <= Date.now()) auraZones.delete(zoneId);
       }
       trySpawnClusterZone();
+      ensureAuraCoverageForActiveUsers();
       if (auraZones.size < 2) seedAuraZone();
       emitAuraUpdate(io);
     }, 60_000);
@@ -417,9 +576,16 @@ export function registerSocketHandlers(io: Server) {
     huntPresenceLoopStarted = true;
     setInterval(() => {
       trySpawnClusterZone();
+      ensureAuraCoverageForActiveUsers();
       emitHuntPresenceAll(io);
       emitAuraUpdate(io);
     }, 15_000);
+  }
+  if (!confessionCleanupStarted) {
+    confessionCleanupStarted = true;
+    setInterval(() => {
+      pruneExpiredConfessions(io);
+    }, CONFESSION_CLEANUP_INTERVAL_MS);
   }
   io.on('connection', (socket: Socket) => {
     socket.on('user:join', (payload: { userId: string; username: string }) => {
@@ -450,12 +616,35 @@ export function registerSocketHandlers(io: Server) {
       });
       emitHuntPresenceForUser(io, userId);
       emitAuraUpdate(io);
-      socket.emit('confession:snapshot', Array.from(confessions.values()).sort((a, b) => b.at - a.at).slice(0, 300).map((c) => ({
-        ...c,
-      })));
+      pruneExpiredConfessions(io);
+      socket.emit(
+        'confession:snapshot',
+        Array.from(confessions.values())
+          .sort((a, b) => b.createdAt - a.createdAt)
+          .slice(0, 300)
+          .map((c) => serializeConfession(c)),
+      );
+    });
+
+    socket.on('user:block', (payload: { targetUserId: string; blocked: boolean }) => {
+      const userId = socket.data.userId;
+      if (!userId || !payload.targetUserId || payload.targetUserId === userId) return;
+      const set = userBlocks.get(userId) ?? new Set<string>();
+      if (payload.blocked) set.add(payload.targetUserId);
+      else set.delete(payload.targetUserId);
+      if (set.size) userBlocks.set(userId, set);
+      else userBlocks.delete(userId);
+    });
+
+    socket.on('hunt:borrow:toggle', (payload: { enabled: boolean }) => {
+      const userId = socket.data.userId;
+      if (!userId) return;
+      borrowDisabledByUser.set(userId, !payload.enabled);
+      emitAuraUpdate(io);
     });
 
     socket.on('room:create', (payload: { userId: string; peerId: string }) => {
+      if (isBlockedEitherWay(payload.userId, payload.peerId)) return;
       const roomId = uuid();
       const participantIds = [payload.userId, payload.peerId];
       rooms.set(roomId, { id: roomId, name: '', participantIds });
@@ -482,6 +671,15 @@ export function registerSocketHandlers(io: Server) {
       const userId = socket.data.userId;
       const username = socket.data.username ?? 'Unknown';
       if (!userId) return;
+      if (isRateLimited(socket, 'message:send', MESSAGE_RATE_LIMIT_COUNT, MESSAGE_RATE_LIMIT_WINDOW_MS)) {
+        socket.emit('message:rate_limited', { limit: MESSAGE_RATE_LIMIT_COUNT, windowMs: MESSAGE_RATE_LIMIT_WINDOW_MS });
+        return;
+      }
+      const room = rooms.get(payload.roomId);
+      if (room) {
+        const blocked = room.participantIds.some((participantId) => participantId !== userId && isBlockedEitherWay(userId, participantId));
+        if (blocked) return;
+      }
       const msg = {
         id: uuid(),
         roomId: payload.roomId,
@@ -521,11 +719,13 @@ export function registerSocketHandlers(io: Server) {
     });
 
     socket.on('call:signal', (payload: { toUserId: string; signal: { type: string; data: unknown } }) => {
+      if (socket.data.userId && isBlockedEitherWay(socket.data.userId, payload.toUserId)) return;
       const peer = Array.from(users.values()).find((u) => u.id === payload.toUserId);
       if (peer) io.to(peer.socketId).emit('call:signal', { fromUserId: socket.data.userId, signal: payload.signal });
     });
 
     socket.on('call:request', (payload: { toUserId: string; type: 'audio' | 'video' }) => {
+      if (socket.data.userId && isBlockedEitherWay(socket.data.userId, payload.toUserId)) return;
       const peer = Array.from(users.values()).find((u) => u.id === payload.toUserId);
       if (peer) {
         io.to(peer.socketId).emit('call:incoming', {
@@ -537,21 +737,24 @@ export function registerSocketHandlers(io: Server) {
     });
 
     socket.on('call:reject', (payload: { fromUserId: string }) => {
+      if (socket.data.userId && isBlockedEitherWay(socket.data.userId, payload.fromUserId)) return;
       const peer = Array.from(users.values()).find((u) => u.id === payload.fromUserId);
       if (peer) io.to(peer.socketId).emit('call:rejected', { byUserId: socket.data.userId });
     });
 
     socket.on('call:accept', (payload: { callerUserId: string }) => {
+      if (socket.data.userId && isBlockedEitherWay(socket.data.userId, payload.callerUserId)) return;
       const caller = Array.from(users.values()).find((u) => u.id === payload.callerUserId);
       if (caller) io.to(caller.socketId).emit('call:accepted', { calleeUserId: socket.data.userId });
     });
 
     socket.on('call:end', (payload: { toUserId: string }) => {
+      if (socket.data.userId && isBlockedEitherWay(socket.data.userId, payload.toUserId)) return;
       const peer = Array.from(users.values()).find((u) => u.id === payload.toUserId);
       if (peer) io.to(peer.socketId).emit('call:ended', { byUserId: socket.data.userId });
     });
 
-    socket.on('wall:post', (payload: { text?: string; imageDataUrl?: string; videoDataUrl?: string; isAnonymous?: boolean }) => {
+    socket.on('wall:post', (payload: { text?: string; imageDataUrl?: string; videoDataUrl?: string; isAnonymous?: boolean; tag?: WallTag }) => {
       const userId = socket.data.userId;
       const username = socket.data.username;
       if (!userId || !username) return;
@@ -559,6 +762,7 @@ export function registerSocketHandlers(io: Server) {
       const imageDataUrl = isAllowedDataUrl(payload.imageDataUrl, 'image') ? payload.imageDataUrl : undefined;
       const videoDataUrl = isAllowedDataUrl(payload.videoDataUrl, 'video') ? payload.videoDataUrl : undefined;
       if (!text && !imageDataUrl && !videoDataUrl) return;
+      const tag = payload.tag && TAGS.includes(payload.tag) ? payload.tag : 'Crush';
       const postId = uuid();
       const post = {
         id: postId,
@@ -571,7 +775,8 @@ export function registerSocketHandlers(io: Server) {
         currentOwnerUserId: userId,
         pulseCount: 0,
         viewerIds: new Set<string>([userId]),
-        vibeCounts: { real: 0, wild: 0, deep: 0, w: 0 },
+        tag,
+        vibeCounts: { calm: 0, chaos: 0, deep: 0, funny: 0 },
         userVibes: new Map<string, Vibe>(),
         isAnonymous: !!payload.isAnonymous,
         anonReputation: getAnonReputation(userId),
@@ -587,7 +792,7 @@ export function registerSocketHandlers(io: Server) {
       emitCreatorSpotlight(io);
     });
 
-    socket.on('wall:extend', (payload: { parentPostId: string; text?: string; imageDataUrl?: string; videoDataUrl?: string; isAnonymous?: boolean }) => {
+    socket.on('wall:extend', (payload: { parentPostId: string; text?: string; imageDataUrl?: string; videoDataUrl?: string; isAnonymous?: boolean; tag?: WallTag }) => {
       const userId = socket.data.userId;
       const username = socket.data.username;
       if (!userId || !username) return;
@@ -597,6 +802,7 @@ export function registerSocketHandlers(io: Server) {
       const imageDataUrl = isAllowedDataUrl(payload.imageDataUrl, 'image') ? payload.imageDataUrl : undefined;
       const videoDataUrl = isAllowedDataUrl(payload.videoDataUrl, 'video') ? payload.videoDataUrl : undefined;
       if (!text && !imageDataUrl && !videoDataUrl) return;
+      const tag = payload.tag && TAGS.includes(payload.tag) ? payload.tag : (parent.tag ?? 'Crush');
       const postId = uuid();
       const contributors = Array.from(new Set([...(parent.contributors ?? [parent.userId]), userId]));
       const post = {
@@ -610,7 +816,8 @@ export function registerSocketHandlers(io: Server) {
         currentOwnerUserId: userId,
         pulseCount: parent.pulseCount,
         viewerIds: new Set<string>([...parent.viewerIds, userId]),
-        vibeCounts: { real: 0, wild: 0, deep: 0, w: 0 },
+        tag,
+        vibeCounts: { calm: 0, chaos: 0, deep: 0, funny: 0 },
         userVibes: new Map<string, Vibe>(),
         isAnonymous: !!payload.isAnonymous,
         anonReputation: getAnonReputation(userId),
@@ -649,7 +856,7 @@ export function registerSocketHandlers(io: Server) {
       });
     });
 
-    socket.on('wall:react', (payload: { postId: string; vibe: Vibe }) => {
+    socket.on('wall:vibe:add', (payload: { postId: string; vibe: Vibe }) => {
       const userId = socket.data.userId;
       if (!userId || !VIBES.includes(payload.vibe)) return;
       const post = wallPosts.get(payload.postId);
@@ -681,23 +888,58 @@ export function registerSocketHandlers(io: Server) {
       emitCreatorSpotlight(io);
     });
 
+    socket.on('wall:report', (payload: { postId: string; reason?: string }) => {
+      const reporterUserId = socket.data.userId;
+      if (!reporterUserId) return;
+      const post = wallPosts.get(payload.postId);
+      if (!post) return;
+      const list = wallReports.get(payload.postId) ?? [];
+      if (list.some((entry) => entry.reporterUserId === reporterUserId)) return;
+      list.push({
+        reporterUserId,
+        reason: payload.reason?.trim() || 'report',
+        at: Date.now(),
+      });
+      wallReports.set(payload.postId, list);
+    });
+
     socket.on('confession:post', (payload: { text: string; isAnonymous: boolean }) => {
       const userId = socket.data.userId;
       const username = socket.data.username;
       if (!userId || !username) return;
+      pruneExpiredConfessions(io);
       const text = payload.text.trim();
       if (!text) return;
+      const createdAt = Date.now();
       const item = {
         id: uuid(),
         userId,
         username,
         text,
-        at: Date.now(),
+        createdAt,
+        expiresAt: createdAt + CONFESSION_TTL_MS,
         isAnonymous: payload.isAnonymous,
         anonReputation: getAnonReputation(userId),
+        replies: [] as Array<{ id: string; text: string; createdAt: number }>,
       };
       confessions.set(item.id, item);
-      io.emit('confession:new', item);
+      io.emit('confession:new', serializeConfession(item));
+    });
+
+    socket.on('confession:reply', (payload: { confessionId: string; text: string }) => {
+      const userId = socket.data.userId;
+      if (!userId) return;
+      pruneExpiredConfessions(io);
+      const item = confessions.get(payload.confessionId);
+      if (!item) return;
+      const text = payload.text.trim();
+      if (!text) return;
+      item.replies.push({
+        id: uuid(),
+        text,
+        createdAt: Date.now(),
+      });
+      io.emit('confession:update', serializeConfession(item));
     });
 
     socket.on('confession:remove', (payload: { confessionId: string }) => {
@@ -732,10 +974,13 @@ export function registerSocketHandlers(io: Server) {
       if (!userId || !username) return;
       const zone = auraZones.get(payload.zoneId);
       if (!zone || !zone.claimedByUserId || zone.expiresAt <= Date.now()) return;
+      if (borrowDisabledByUser.get(zone.claimedByUserId)) return;
+      if (isBlockedEitherWay(userId, zone.claimedByUserId)) return;
       if (zone.claimedByUserId === userId) return;
       if (zone.borrowedBy.has(userId)) return;
       const distance = metersBetween(payload.lat, payload.lng, zone.lat, zone.lng);
       if (distance > MAX_HUNT_DISTANCE_METERS) return;
+      if (distance > zone.radiusMeters) return;
       const owner = users.get(zone.claimedByUserId);
       if (!owner) return;
       const set = pendingBorrowRequests.get(zone.id) ?? new Set<string>();
@@ -791,6 +1036,7 @@ export function registerSocketHandlers(io: Server) {
         updatedAt: Date.now(),
       });
       trySpawnClusterZone();
+      ensureAuraCoverageForActiveUsers();
       emitHuntPresenceAll(io);
       emitAuraUpdate(io);
     });

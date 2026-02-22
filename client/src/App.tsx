@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { AppProvider, useApp } from './context/AppContext';
 import { CallProvider } from './hooks/useCall';
@@ -10,12 +10,28 @@ import { ConfessionsPage } from './components/ConfessionsPage';
 import { AuraHuntPage } from './components/AuraHuntPage';
 import { IncomingCall } from './components/IncomingCall';
 import { ActiveCall } from './components/ActiveCall';
+import { Onboarding } from './components/Onboarding';
 import './App.css';
 
+const ONBOARDING_KEY = 'pulsely_onboarded';
+
+const isPhoneViewport = () =>
+  typeof window !== 'undefined' &&
+  (window.matchMedia('(max-width: 640px)').matches ||
+    window.matchMedia('(max-width: 820px) and (pointer: coarse)').matches);
+
 function AppContent() {
-  const { currentUser, logout, connected, incomingCall, activeCall, users, nodeProfile, claimDailyNodeCharge } = useApp();
+  const { currentUser, logout, connected, incomingCall, activeCall, users, activeRoom, messages, nodeProfile, claimDailyNodeCharge } = useApp();
   const [view, setView] = useState<'chat' | 'wall' | 'confession' | 'hunt'>('chat');
   const [privacyShield, setPrivacyShield] = useState(false);
+  const [isMobile, setIsMobile] = useState(isPhoneViewport);
+  const [mobileChatOpen, setMobileChatOpen] = useState(false);
+  const [mobileUnread, setMobileUnread] = useState(0);
+  const lastMessageIdRef = useRef<string | null>(null);
+  const [showOnboarding, setShowOnboarding] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return localStorage.getItem(ONBOARDING_KEY) !== 'true';
+  });
 
   useEffect(() => {
     const onPrintScreen = (e: KeyboardEvent) => {
@@ -33,6 +49,30 @@ function AppContent() {
     };
   }, []);
 
+  useEffect(() => {
+    const onResize = () => setIsMobile(isPhoneViewport());
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  useEffect(() => {
+    if (!isMobile) {
+      setMobileChatOpen(false);
+      setMobileUnread(0);
+    }
+  }, [isMobile]);
+
+  useEffect(() => {
+    const last = messages[messages.length - 1];
+    if (!last) return;
+    if (last.id === lastMessageIdRef.current) return;
+    const incoming = last.userId !== currentUser?.id;
+    if (isMobile && !mobileChatOpen && incoming) {
+      setMobileUnread((value) => value + 1);
+    }
+    lastMessageIdRef.current = last.id;
+  }, [messages, isMobile, mobileChatOpen, currentUser?.id]);
+
   if (!currentUser) return null;
 
   const today = new Date().toISOString().slice(0, 10);
@@ -43,6 +83,11 @@ function AppContent() {
     nodeProfile.level >= 20 ? 'Nova' :
     nodeProfile.level >= 12 ? 'Flux' :
     nodeProfile.level >= 6 ? 'Neon' : 'Rookie';
+
+  const completeOnboarding = () => {
+    localStorage.setItem(ONBOARDING_KEY, 'true');
+    setShowOnboarding(false);
+  };
 
   return (
     <div className="app-layout">
@@ -79,7 +124,7 @@ function AppContent() {
             </div>
           )}
           <span className="online-badge">{users.length} online</span>
-          <span className={`status-dot ${connected ? 'online' : 'offline'}`} title={connected ? 'Connected' : 'Disconnected'} />
+          <span className={`status-dot ${connected ? 'online' : 'offline'}`} title={connected ? 'In the layer' : 'Signal lost'} />
           <span className="username">{currentUser.username}</span>
           <button type="button" className="logout-btn" onClick={logout}>
             Log out
@@ -101,10 +146,57 @@ function AppContent() {
                 <ChatList />
               </aside>
               <section className="content">
-                <div className="chat-content-grid">
-                  <ChatRoom />
-                  <LiveShareStream />
-                </div>
+                {isMobile ? (
+                  <div className="chat-mobile-shell">
+                    <LiveShareStream onPostPulse={() => setView('wall')} onOpenConfessions={() => setView('confession')} />
+                    {activeRoom ? (
+                      <button
+                        type="button"
+                        className="mobile-chat-fab"
+                        onClick={() => {
+                          setMobileChatOpen(true);
+                          setMobileUnread(0);
+                        }}
+                      >
+                        Chat
+                        {mobileUnread > 0 && <span>{mobileUnread}</span>}
+                      </button>
+                    ) : (
+                      <p className="mobile-chat-hint">Select a node to open chat.</p>
+                    )}
+                    <AnimatePresence>
+                      {mobileChatOpen && (
+                        <motion.div
+                          className="mobile-chat-overlay"
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          exit={{ opacity: 0 }}
+                        >
+                          <motion.div
+                            className="mobile-chat-window"
+                            initial={{ y: 28, opacity: 0 }}
+                            animate={{ y: 0, opacity: 1 }}
+                            exit={{ y: 28, opacity: 0 }}
+                          >
+                            <button
+                              type="button"
+                              className="mobile-chat-close"
+                              onClick={() => setMobileChatOpen(false)}
+                            >
+                              Close
+                            </button>
+                            <ChatRoom />
+                          </motion.div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                ) : (
+                  <div className="chat-content-grid">
+                    <ChatRoom />
+                    <LiveShareStream onPostPulse={() => setView('wall')} onOpenConfessions={() => setView('confession')} />
+                  </div>
+                )}
               </section>
             </motion.div>
           ) : view === 'wall' ? (
@@ -154,7 +246,7 @@ function AppContent() {
       </div>
       {privacyShield && (
         <div className="privacy-shield">
-          <div>Screen capture detected. Protected mode enabled.</div>
+          <div>Eyes on glass detected. Veil raised.</div>
         </div>
       )}
       <AnimatePresence>
@@ -175,6 +267,9 @@ function AppContent() {
             type={activeCall.type}
           />
         )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {showOnboarding && <Onboarding onComplete={completeOnboarding} />}
       </AnimatePresence>
     </div>
   );
